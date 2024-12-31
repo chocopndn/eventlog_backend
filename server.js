@@ -1,8 +1,5 @@
-const express = require("express");
+const app = require("./app");
 const { sequelize } = require("./config/db");
-const app = express();
-
-app.use(express.json());
 
 console.log("Starting the server...");
 
@@ -19,9 +16,3 @@ console.log("Starting the server...");
     console.error("Error connecting to the database:", error);
   }
 })();
-
-app.get("/", (req, res) => {
-  res.send("API is running...");
-});
-
-module.exports = app;
