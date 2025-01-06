@@ -1,4 +1,4 @@
-const { Users } = require("../models");
+const { Users, Codes } = require("../models");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
@@ -21,7 +21,6 @@ exports.signup = async (req, res) => {
     });
 
     if (existingUser) {
-      console.log("Existing user found, updating...");
       existingUser.email = email;
       existingUser.password = await bcrypt.hash(password, 10);
       await existingUser.save();
@@ -101,32 +100,41 @@ exports.resetPassword = async (req, res) => {
 
     const resetCode = Math.floor(10000 + Math.random() * 90000);
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: config.GMAIL_USER,
-        pass: config.GMAIL_PASS,
-      },
+    await Codes.create({
+      email: existingUser.email,
+      reset_code: resetCode,
+      created_at: new Date(),
+      used: false,
     });
+
+    const transporter = nodemailer.createTransport({
+      host: "smtp.zoho.com",
+      port: 465,
+      auth: {
+        user: config.EMAIL_USER,
+        pass: config.EMAIL_PASS,
+      },
+      logger: true,
+      debug: true,
+    });
+
+    await transporter.verify();
 
     const resetContent = `Hello, \n\nPlease use the following code to reset your password: \n\n${resetCode}\n\nIf you did not request a password reset, please ignore this email.`;
 
     const info = await transporter.sendMail({
-      from: '"Eventlog" <eventlogucv.noreply@gmail.com>',
+      from: '"Eventlog" <eventlogucv@zohomail.com>',
       to: email,
       subject: "Password Reset Request",
       text: resetContent,
       html: `<b>Hello,</b><br><br>Please use the following code to reset your password: <b>${resetCode}</b><br><br>If you did not request a password reset, please ignore this email.`,
     });
 
-    console.log("Message sent: %s", info.messageId);
-
     res.status(200).json({
       message:
         "Password reset email sent successfully. Please check your inbox.",
     });
   } catch (error) {
-    console.error("Error occurred during password reset:", error);
     res.status(500).json({
       message: "Internal server error",
       error: error.message,
