@@ -8,6 +8,7 @@ const Department = require("./department")(sequelize, DataTypes);
 const Event = require("./event")(sequelize, DataTypes);
 const Users = require("./users")(sequelize, DataTypes);
 const YearLevel = require("./yearlevel")(sequelize, DataTypes);
+const Codes = require("./resetCodes")(sequelize, DataTypes);
 
 Admins.belongsTo(Department, { foreignKey: "department_ID" });
 Users.belongsTo(Department, { foreignKey: "department_ID" });
@@ -19,6 +20,7 @@ Event.belongsTo(Block, { foreignKey: "block_ID" });
 Attendance.belongsTo(Event, { foreignKey: "event_ID" });
 Attendance.belongsTo(Users, { foreignKey: "student_ID" });
 Block.belongsTo(YearLevel, { foreignKey: "yearlevel_ID" });
+Codes.belongsTo(Users, { foreignKey: "student_ID" });
 
 module.exports = {
   sequelize,
@@ -29,4 +31,5 @@ module.exports = {
   Event,
   Users,
   YearLevel,
+  Codes,
 };
