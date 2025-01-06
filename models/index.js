@@ -20,7 +20,7 @@ Event.belongsTo(Block, { foreignKey: "block_ID" });
 Attendance.belongsTo(Event, { foreignKey: "event_ID" });
 Attendance.belongsTo(Users, { foreignKey: "student_ID" });
 Block.belongsTo(YearLevel, { foreignKey: "yearlevel_ID" });
-Codes.belongsTo(Users, { foreignKey: "student_ID" });
+Codes.belongsTo(Users, { foreignKey: "email" });
 
 module.exports = {
   sequelize,

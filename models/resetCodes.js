@@ -9,12 +9,12 @@ module.exports = (sequelize) => {
         primaryKey: true,
         autoIncrement: true,
       },
-      student_ID: {
-        type: DataTypes.INTEGER,
+      email: {
+        type: DataTypes.STRING,
         allowNull: false,
         references: {
           model: "Users",
-          key: "student_ID",
+          key: "email",
         },
       },
       reset_code: {
