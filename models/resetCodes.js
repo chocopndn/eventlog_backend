@@ -18,7 +18,7 @@ module.exports = (sequelize) => {
         },
       },
       reset_code: {
-        type: DataTypes.CHAR(5),
+        type: DataTypes.INTEGER,
         allowNull: false,
       },
       created_at: {
