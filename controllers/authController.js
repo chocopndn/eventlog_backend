@@ -141,3 +141,46 @@ exports.resetPassword = async (req, res) => {
     });
   }
 };
+
+exports.verifyResetCode = async (req, res) => {
+  const { email, resetCode } = req.body;
+
+  try {
+    const existingUser = await Users.findOne({
+      where: { email },
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const resetCodeRecord = await Codes.findOne({
+      where: { email, reset_code: parseInt(resetCode) },
+    });
+
+    if (!resetCodeRecord) {
+      return res.status(400).json({ message: "Invalid reset code" });
+    }
+
+    if (resetCodeRecord.used) {
+      return res.status(400).json({ message: "Reset code already used" });
+    }
+
+    const currentTime = new Date();
+    if (currentTime - new Date(resetCodeRecord.created_at) > 15 * 60 * 1000) {
+      return res.status(400).json({ message: "Reset code has expired" });
+    }
+
+    await Codes.update(
+      { used: true },
+      { where: { code_id: resetCodeRecord.code_id } }
+    );
+
+    res.status(200).json({ message: "Reset code verified." });
+  } catch (error) {
+    res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
