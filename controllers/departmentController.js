@@ -5,10 +5,15 @@ exports.getDepartment = async (req, res) => {
     const departments = await Department.findAll();
 
     if (departments && departments.length > 0) {
-      const departmentNames = departments.map((dept) => dept.departmentName);
+      const sortedDepartments = departments
+        .map((dept) => ({
+          department_ID: dept.department_ID,
+          departmentName: dept.departmentName,
+        }))
+        .sort((a, b) => a.department_ID - b.department_ID);
 
       return res.status(200).json({
-        departments: departmentNames,
+        departments: sortedDepartments,
       });
     } else {
       return res.status(404).json({
