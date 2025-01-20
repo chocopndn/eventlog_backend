@@ -1,38 +1,63 @@
-const { Users, Codes } = require("../models");
+const { Users, Codes, Department } = require("../models");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-const crypto = require("crypto");
 
 const config = require("../config/config");
 
 exports.signup = async (req, res) => {
-  const { student_ID, firstName, middleName, lastName, email, password } =
-    req.body;
+  const {
+    student_ID,
+    firstName,
+    middleName,
+    lastName,
+    suffix = null,
+    email,
+    password,
+    department,
+  } = req.body;
 
   try {
+    const departmentRecord = await Department.findOne({
+      where: { id: department },
+    });
+
+    if (!departmentRecord) {
+      return res.status(400).json({
+        message: "Invalid department. Please provide a valid department ID.",
+      });
+    }
+
     const existingUser = await Users.findOne({
       where: {
         student_ID,
         firstName,
-        lastName,
         middleName,
+        lastName,
+        suffix,
       },
     });
 
     if (existingUser) {
+      if (existingUser.password) {
+        return res.status(400).json({
+          message: "User already has an account. Please log in.",
+        });
+      }
+
       existingUser.email = email;
       existingUser.password = await bcrypt.hash(password, 10);
+      existingUser.department_id = department.department_;
       await existingUser.save();
 
       return res.status(200).json({
-        message: "User successfully updated.",
+        message: "User account successfully completed.",
         user: existingUser,
       });
     }
 
     return res.status(400).json({
-      message: "Student data does not match. User not updated.",
+      message: "Student data does not match. User not created.",
     });
   } catch (error) {
     res.status(500).json({
