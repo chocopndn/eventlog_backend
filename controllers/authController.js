@@ -19,48 +19,49 @@ exports.signup = async (req, res) => {
 
   try {
     const departmentRecord = await Department.findOne({
-      where: { id: department },
+      where: { department_ID: department },
     });
 
     if (!departmentRecord) {
       return res.status(400).json({
-        message: "Invalid department. Please provide a valid department ID.",
+        message: "Invalid department ID. Please provide a valid department ID.",
       });
     }
 
-    const existingUser = await Users.findOne({
+    const matchingUser = await Users.findOne({
       where: {
         student_ID,
         firstName,
         middleName,
         lastName,
         suffix,
+        department_ID: department,
       },
     });
 
-    if (existingUser) {
-      if (existingUser.password) {
-        return res.status(400).json({
-          message: "User already has an account. Please log in.",
-        });
-      }
-
-      existingUser.email = email;
-      existingUser.password = await bcrypt.hash(password, 10);
-      existingUser.department_id = department.department_;
-      await existingUser.save();
-
-      return res.status(200).json({
-        message: "User account successfully completed.",
-        user: existingUser,
+    if (!matchingUser) {
+      return res.status(400).json({
+        message: "Student data does not match. User not created.",
       });
     }
 
-    return res.status(400).json({
-      message: "Student data does not match. User not created.",
+    if (matchingUser.password) {
+      return res.status(400).json({
+        message: "User already has an account. Please log in.",
+      });
+    }
+
+    matchingUser.email = email;
+    matchingUser.password = await bcrypt.hash(password, 10);
+    await matchingUser.save();
+
+    return res.status(200).json({
+      message: "User account successfully completed.",
+      user: matchingUser,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error during signup:", error.message);
+    return res.status(500).json({
       message: "Internal server error",
       error: error.message,
     });
