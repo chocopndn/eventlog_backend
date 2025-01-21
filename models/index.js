@@ -7,7 +7,7 @@ const Block = require("./block")(sequelize, DataTypes);
 const Department = require("./department")(sequelize, DataTypes);
 const Event = require("./event")(sequelize, DataTypes);
 const Users = require("./users")(sequelize, DataTypes);
-const YearLevel = require("./yearlevel")(sequelize, DataTypes);
+const YearLevel = require("./yearLevel")(sequelize, DataTypes);
 const Codes = require("./resetCodes")(sequelize, DataTypes);
 
 Admins.belongsTo(Department, { foreignKey: "department_ID" });

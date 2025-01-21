@@ -4,43 +4,43 @@ module.exports = (sequelize) => {
   const Users = sequelize.define(
     "Users",
     {
-      student_ID: {
+      student_id: {
         type: DataTypes.INTEGER,
         primaryKey: true,
       },
-      department_ID: {
+      department_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
         references: {
-          model: "Department",
-          key: "department_ID",
+          model: "department",
+          key: "department_id",
         },
       },
-      yearlevel_ID: {
+      yearlevel_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
         references: {
-          model: "YearLevel",
-          key: "yearlevel_ID",
+          model: "year_level",
+          key: "yearlevel_id",
         },
       },
-      block_ID: {
+      block_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
         references: {
-          model: "Block",
-          key: "block_ID",
+          model: "block",
+          key: "block_id",
         },
       },
-      lastName: {
+      last_name: {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      firstName: {
+      first_name: {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      middleName: {
+      middle_name: {
         type: DataTypes.STRING,
       },
       suffix: {
@@ -49,9 +49,11 @@ module.exports = (sequelize) => {
       email: {
         type: DataTypes.STRING,
         unique: true,
+        allowNull: false,
       },
       password: {
         type: DataTypes.STRING,
+        allowNull: false,
       },
       role: {
         type: DataTypes.ENUM("Student", "Officer"),
@@ -59,8 +61,10 @@ module.exports = (sequelize) => {
       },
     },
     {
+      tableName: "users",
       timestamps: false,
     }
   );
+
   return Users;
 };

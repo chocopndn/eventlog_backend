@@ -13,7 +13,7 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING,
         allowNull: false,
         references: {
-          model: "Users",
+          model: "users",
           key: "email",
         },
       },
