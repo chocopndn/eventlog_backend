@@ -1,8 +1,8 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-  const Users = sequelize.define(
-    "Users",
+  const User = sequelize.define(
+    "User",
     {
       student_id: {
         type: DataTypes.INTEGER,
@@ -45,11 +45,15 @@ module.exports = (sequelize) => {
       },
       suffix: {
         type: DataTypes.STRING(10),
+        defaultValue: null,
       },
       email: {
         type: DataTypes.STRING,
         unique: true,
         allowNull: false,
+        validate: {
+          isEmail: true,
+        },
       },
       password: {
         type: DataTypes.STRING,
@@ -58,13 +62,24 @@ module.exports = (sequelize) => {
       role: {
         type: DataTypes.ENUM("Student", "Officer"),
         allowNull: false,
+        validate: {
+          isIn: [["Student", "Officer"]],
+        },
       },
     },
     {
       tableName: "users",
       timestamps: false,
+      hooks: {
+        beforeCreate: async (user) => {
+          if (user.password) {
+            const bcrypt = require("bcrypt");
+            user.password = await bcrypt.hash(user.password, 10);
+          }
+        },
+      },
     }
   );
 
-  return Users;
+  return User;
 };

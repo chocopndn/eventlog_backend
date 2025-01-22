@@ -1,13 +1,13 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-  const Codes = sequelize.define(
-    "Codes",
+  const Code = sequelize.define(
+    "Code",
     {
       code_id: {
         type: DataTypes.INTEGER,
-        primaryKey: true,
         autoIncrement: true,
+        primaryKey: true,
       },
       email: {
         type: DataTypes.STRING,
@@ -36,5 +36,5 @@ module.exports = (sequelize) => {
     }
   );
 
-  return Codes;
+  return Code;
 };

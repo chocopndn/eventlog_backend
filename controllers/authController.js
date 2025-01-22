@@ -1,63 +1,58 @@
-const { Users, Codes, Department } = require("../models");
+const { User, Code, Department } = require("../models");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-
 const config = require("../config/config");
 
 exports.signup = async (req, res) => {
   const {
-    student_ID,
-    firstName,
-    middleName,
-    lastName,
+    student_id,
+    first_name,
+    middle_name,
+    last_name,
     suffix = null,
     email,
     password,
-    department,
+    department_id,
   } = req.body;
 
   try {
-    const departmentRecord = await Department.findOne({
-      where: { department_ID: department },
-    });
+    const department = await Department.findOne({ where: { department_id } });
 
-    if (!departmentRecord) {
-      return res.status(400).json({
-        message: "Invalid department ID. Please provide a valid department ID.",
-      });
+    if (!department) {
+      return res.status(400).json({ message: "Invalid department ID." });
     }
 
-    const matchingUser = await Users.findOne({
+    const user = await User.findOne({
       where: {
-        student_ID,
-        firstName,
-        middleName,
-        lastName,
+        student_id,
+        first_name,
+        middle_name,
+        last_name,
         suffix,
-        department_ID: department,
+        department_id,
       },
     });
 
-    if (!matchingUser) {
+    if (!user) {
       return res.status(400).json({
         message: "Student data does not match. User not created.",
       });
     }
 
-    if (matchingUser.password) {
+    if (user.password) {
       return res.status(400).json({
         message: "User already has an account. Please log in.",
       });
     }
 
-    matchingUser.email = email;
-    matchingUser.password = await bcrypt.hash(password, 10);
-    await matchingUser.save();
+    user.email = email;
+    user.password = await bcrypt.hash(password, 10);
+    await user.save();
 
     return res.status(200).json({
-      message: "User account successfully completed.",
-      user: matchingUser,
+      message: "User account successfully created.",
+      user,
     });
   } catch (error) {
     console.error("Error during signup:", error.message);
@@ -69,43 +64,38 @@ exports.signup = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  const { student_ID, password } = req.body;
+  const { student_id, password } = req.body;
 
   try {
-    const existingUser = await Users.findOne({
-      where: { student_ID },
-    });
+    const user = await User.findOne({ where: { student_id } });
 
-    if (!existingUser) {
-      return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      password,
-      existingUser.password
-    );
+    const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      return res.status(401).json({ message: "Invalid password" });
+      return res.status(401).json({ message: "Invalid password." });
     }
 
     const token = jwt.sign(
-      { id: existingUser.student_ID, email: existingUser.email },
+      { id: user.student_id, email: user.email },
       config.JWT_SECRET_KEY
     );
 
     return res.status(200).json({
-      message: "Login successful",
+      message: "Login successful.",
       token,
       user: {
-        student_ID: existingUser.student_ID,
-        firstName: existingUser.firstName,
-        lastName: existingUser.lastName,
-        email: existingUser.email,
+        student_id: user.student_id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
       },
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       message: "Internal server error",
       error: error.message,
     });
@@ -116,18 +106,16 @@ exports.resetPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
-    const existingUser = await Users.findOne({
-      where: { email },
-    });
+    const user = await User.findOne({ where: { email } });
 
-    if (!existingUser) {
-      return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
     }
 
     const resetCode = Math.floor(10000 + Math.random() * 90000);
 
-    await Codes.create({
-      email: existingUser.email,
+    await Code.create({
+      email: user.email,
       reset_code: resetCode,
       created_at: new Date(),
       used: false,
@@ -140,28 +128,24 @@ exports.resetPassword = async (req, res) => {
         user: config.EMAIL_USER,
         pass: config.EMAIL_PASS,
       },
-      logger: true,
-      debug: true,
     });
 
     await transporter.verify();
 
-    const resetContent = `Hello, \n\nPlease use the following code to reset your password: \n\n${resetCode}\n\nIf you did not request a password reset, please ignore this email.`;
-
-    const info = await transporter.sendMail({
+    await transporter.sendMail({
       from: '"Eventlog" <eventlogucv@zohomail.com>',
       to: email,
       subject: "Password Reset Request",
-      text: resetContent,
-      html: `<b>Hello,</b><br><br>Please use the following code to reset your password: <b>${resetCode}</b><br><br>If you did not request a password reset, please ignore this email.`,
+      text: `Your password reset code is: ${resetCode}`,
+      html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
 
-    res.status(200).json({
-      message:
-        "Password reset email sent successfully. Please check your inbox.",
+    return res.status(200).json({
+      message: "Password reset email sent successfully.",
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error during password reset:", error.message);
+    return res.status(500).json({
       message: "Internal server error",
       error: error.message,
     });
@@ -169,42 +153,49 @@ exports.resetPassword = async (req, res) => {
 };
 
 exports.verifyResetCode = async (req, res) => {
-  const { email, resetCode } = req.body;
+  const { email, reset_code } = req.body;
 
   try {
-    const existingUser = await Users.findOne({
-      where: { email },
+    if (!reset_code || isNaN(parseInt(reset_code))) {
+      return res
+        .status(400)
+        .json({ message: "Invalid or missing reset code." });
+    }
+
+    const user = await User.findOne({ where: { email } });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const codeRecord = await Code.findOne({
+      where: { email, reset_code: parseInt(reset_code) },
     });
 
-    if (!existingUser) {
-      return res.status(404).json({ message: "User not found" });
+    if (!codeRecord) {
+      return res.status(400).json({ message: "Invalid reset code." });
     }
 
-    const resetCodeRecord = await Codes.findOne({
-      where: { email, reset_code: parseInt(resetCode) },
-    });
-
-    if (!resetCodeRecord) {
-      return res.status(400).json({ message: "Invalid reset code" });
+    if (codeRecord.used) {
+      return res.status(400).json({ message: "Reset code already used." });
     }
 
-    if (resetCodeRecord.used) {
-      return res.status(400).json({ message: "Reset code already used" });
+    const now = new Date();
+    if (now - new Date(codeRecord.created_at) > 15 * 60 * 1000) {
+      return res.status(400).json({ message: "Reset code has expired." });
     }
 
-    const currentTime = new Date();
-    if (currentTime - new Date(resetCodeRecord.created_at) > 15 * 60 * 1000) {
-      return res.status(400).json({ message: "Reset code has expired" });
-    }
-
-    await Codes.update(
+    await Code.update(
       { used: true },
-      { where: { code_id: resetCodeRecord.code_id } }
+      { where: { code_id: codeRecord.code_id } }
     );
 
-    res.status(200).json({ message: "Reset code verified." });
+    return res
+      .status(200)
+      .json({ message: "Reset code verified successfully." });
   } catch (error) {
-    res.status(500).json({
+    console.error("Error verifying reset code:", error.message);
+    return res.status(500).json({
       message: "Internal server error",
       error: error.message,
     });
