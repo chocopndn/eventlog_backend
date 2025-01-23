@@ -114,12 +114,14 @@ exports.resetPassword = async (req, res) => {
 
     const resetCode = Math.floor(10000 + Math.random() * 90000);
 
-    await Code.create({
+    Code.create({
       email: user.email,
       reset_code: resetCode,
       created_at: new Date(),
       used: false,
     });
+
+    res.status(200).json({ message: "Password reset request received." });
 
     const transporter = nodemailer.createTransport({
       host: "smtp.zoho.com",
@@ -130,8 +132,6 @@ exports.resetPassword = async (req, res) => {
       },
     });
 
-    await transporter.verify();
-
     await transporter.sendMail({
       from: '"Eventlog" <eventlogucv@zohomail.com>',
       to: email,
@@ -139,16 +139,9 @@ exports.resetPassword = async (req, res) => {
       text: `Your password reset code is: ${resetCode}`,
       html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
-
-    return res.status(200).json({
-      message: "Password reset email sent successfully.",
-    });
   } catch (error) {
     console.error("Error during password reset:", error.message);
-    return res.status(500).json({
-      message: "Internal server error",
-      error: error.message,
-    });
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 
