@@ -20,7 +20,10 @@ exports.signup = async (req, res) => {
     const department = await Department.findOne({ where: { department_id } });
 
     if (!department) {
-      return res.status(400).json({ message: "Invalid department ID." });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid department ID.",
+      });
     }
 
     const user = await User.findOne({
@@ -36,12 +39,14 @@ exports.signup = async (req, res) => {
 
     if (!user) {
       return res.status(400).json({
+        success: false,
         message: "Student data does not match. User not created.",
       });
     }
 
     if (user.password) {
       return res.status(400).json({
+        success: false,
         message: "User already has an account. Please log in.",
       });
     }
@@ -51,12 +56,14 @@ exports.signup = async (req, res) => {
     await user.save();
 
     return res.status(200).json({
+      success: true,
       message: "User account successfully created.",
       user,
     });
   } catch (error) {
     console.error("Error during signup:", error.message);
     return res.status(500).json({
+      success: false,
       message: "Internal server error",
       error: error.message,
     });
@@ -70,13 +77,17 @@ exports.login = async (req, res) => {
     const user = await User.findOne({ where: { student_id } });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      return res.status(401).json({ message: "Invalid password." });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid password." });
     }
 
     const token = jwt.sign(
@@ -85,6 +96,7 @@ exports.login = async (req, res) => {
     );
 
     return res.status(200).json({
+      success: true,
       message: "Login successful.",
       token,
       user: {
@@ -96,20 +108,23 @@ exports.login = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({
+      success: false,
       message: "Internal server error",
       error: error.message,
     });
   }
 };
 
-exports.resetPassword = async (req, res) => {
+exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
     const user = await User.findOne({ where: { email } });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
     }
 
     const resetCode = Math.floor(10000 + Math.random() * 90000);
@@ -121,7 +136,9 @@ exports.resetPassword = async (req, res) => {
       used: false,
     });
 
-    res.status(200).json({ message: "Password reset request received." });
+    res
+      .status(200)
+      .json({ success: true, message: "Password reset request received." });
 
     const transporter = nodemailer.createTransport({
       host: "smtp.zoho.com",
@@ -140,8 +157,7 @@ exports.resetPassword = async (req, res) => {
       html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
   } catch (error) {
-    console.error("Error during password reset:", error.message);
-    res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
 
@@ -152,13 +168,15 @@ exports.verifyResetCode = async (req, res) => {
     if (!reset_code || isNaN(parseInt(reset_code))) {
       return res
         .status(400)
-        .json({ message: "Invalid or missing reset code." });
+        .json({ success: false, message: "Invalid or missing reset code." });
     }
 
     const user = await User.findOne({ where: { email } });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
     }
 
     const codeRecord = await Code.findOne({
@@ -166,16 +184,22 @@ exports.verifyResetCode = async (req, res) => {
     });
 
     if (!codeRecord) {
-      return res.status(400).json({ message: "Invalid reset code." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid reset code." });
     }
 
     if (codeRecord.used) {
-      return res.status(400).json({ message: "Reset code already used." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Reset code already used." });
     }
 
     const now = new Date();
     if (now - new Date(codeRecord.created_at) > 15 * 60 * 1000) {
-      return res.status(400).json({ message: "Reset code has expired." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Reset code has expired." });
     }
 
     await Code.update(
@@ -185,10 +209,10 @@ exports.verifyResetCode = async (req, res) => {
 
     return res
       .status(200)
-      .json({ message: "Reset code verified successfully." });
+      .json({ success: true, message: "Reset code verified successfully." });
   } catch (error) {
-    console.error("Error verifying reset code:", error.message);
     return res.status(500).json({
+      success: false,
       message: "Internal server error",
       error: error.message,
     });
