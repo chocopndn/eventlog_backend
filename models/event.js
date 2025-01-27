@@ -15,6 +15,7 @@ module.exports = (sequelize) => {
           model: "department",
           key: "department_id",
         },
+        allowNull: true,
       },
       yearlevel_id: {
         type: DataTypes.INTEGER,
@@ -22,6 +23,7 @@ module.exports = (sequelize) => {
           model: "year_level",
           key: "yearlevel_id",
         },
+        allowNull: true,
       },
       block_id: {
         type: DataTypes.INTEGER,
@@ -29,28 +31,37 @@ module.exports = (sequelize) => {
           model: "block",
           key: "block_id",
         },
+        allowNull: true,
       },
-      event_name: {
-        type: DataTypes.STRING,
+      event_name_id: {
+        type: DataTypes.INTEGER,
+        references: {
+          model: "event_names",
+          key: "event_name_id",
+        },
         allowNull: false,
       },
       venue: {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      morning_time_in: {
+      date_of_event: {
+        type: DataTypes.DATEONLY,
+        allowNull: false,
+      },
+      am_in: {
         type: DataTypes.TIME,
         allowNull: true,
       },
-      morning_time_out: {
+      am_out: {
         type: DataTypes.TIME,
         allowNull: true,
       },
-      afternoon_time_in: {
+      pm_in: {
         type: DataTypes.TIME,
         allowNull: true,
       },
-      afternoon_time_out: {
+      pm_out: {
         type: DataTypes.TIME,
         allowNull: true,
       },
