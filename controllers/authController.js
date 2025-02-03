@@ -1,72 +1,78 @@
-// Import necessary modules and dependencies
-const { User, Code, Department, Block, YearLevel } = require("../models");
+const { pool } = require("../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const config = require("../config/config");
 
-// Signup function to register a new user
 exports.signup = async (req, res) => {
   const {
     student_id,
     first_name,
     middle_name,
     last_name,
-    suffix = null, // Optional field, default is null
+    suffix = null,
     email,
     password,
     department_id,
   } = req.body;
 
   try {
-    // Check if the department exists
-    const department = await Department.findOne({ where: { department_id } });
-    if (!department) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid department ID.",
-      });
+    const [department] = await pool.query(
+      "SELECT 1 FROM department WHERE department_id = ?",
+      [department_id]
+    );
+    if (!department.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid department ID." });
     }
 
-    // Check if the user exists in the database
-    const user = await User.findOne({
-      where: {
-        student_id,
-        first_name,
-        middle_name,
-        last_name,
-        suffix,
-        department_id,
-      },
-    });
+    const [user] = await pool.query(
+      `SELECT * FROM users 
+       WHERE student_id = ? 
+       AND LOWER(first_name) = LOWER(?) 
+       AND LOWER(middle_name) = LOWER(?) 
+       AND LOWER(last_name) = LOWER(?) 
+       AND COALESCE(suffix, '') = COALESCE(?, '') 
+       AND department_id = ?`,
+      [student_id, first_name, middle_name, last_name, suffix, department_id]
+    );
 
-    if (!user) {
+    if (!user.length) {
       return res.status(400).json({
         success: false,
         message: "Student data does not match. User not created.",
       });
     }
 
-    // Check if the user already has a password (account exists)
-    if (user.password) {
+    if (user[0].password) {
       return res.status(400).json({
         success: false,
         message: "User already has an account. Please log in.",
       });
     }
 
-    // Set the email and encrypt the password before saving
-    user.email = email;
-    user.password = await bcrypt.hash(password, 10);
-    await user.save();
+    const [existingEmail] = await pool.query(
+      "SELECT 1 FROM users WHERE email = ?",
+      [email]
+    );
+    if (existingEmail.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email is already in use." });
+    }
 
-    return res.status(200).json({
-      success: true,
-      message: "User account successfully created.",
-      user,
-    });
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await pool.query(
+      "UPDATE users SET email = ?, password = ? WHERE student_id = ?",
+      [email, hashedPassword, student_id]
+    );
+
+    return res
+      .status(200)
+      .json({ success: true, message: "User account successfully created." });
   } catch (error) {
-    // Catch any unexpected error
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -75,91 +81,95 @@ exports.signup = async (req, res) => {
   }
 };
 
-// Login function to authenticate user
 exports.login = async (req, res) => {
   const { student_id, password } = req.body;
 
   try {
-    // Find the user by their student ID
-    const user = await User.findOne({ where: { student_id } });
+    const [user] = await pool.query(
+      "SELECT * FROM users WHERE student_id = ?",
+      [student_id]
+    );
 
-    if (!user) {
+    if (!user.length) {
       return res
         .status(404)
         .json({ success: false, message: "User not found." });
     }
 
-    // Check if the password matches
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(password, user[0].password);
     if (!isPasswordValid) {
       return res
         .status(401)
         .json({ success: false, message: "Invalid password." });
     }
 
-    // Generate a JWT token for the user
     const token = jwt.sign(
-      { id: user.student_id, email: user.email },
-      config.JWT_SECRET_KEY
+      { id: user[0].student_id, email: user[0].email, role: user[0].role },
+      config.JWT_SECRET_KEY,
+      { expiresIn: "7d" }
     );
 
     return res.status(200).json({
       success: true,
-      message: "Login successful.", // Login success message
+      message: "Login successful.",
       token,
       user: {
-        student_id: user.student_id,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        email: user.email,
-        block: user.block
-          ? {
-              id: user.block.block_id,
-              name: user.block.name, // Include block details if present
-              description: user.block.description,
-            }
-          : null, // If no block is assigned, return null
+        student_id: user[0].student_id,
+        first_name: user[0].first_name,
+        last_name: user[0].last_name,
+        email: user[0].email,
+        block: user[0].block_id ? { id: user[0].block_id } : null,
       },
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: "Internal server error", // Error handling
+      message: "Internal server error",
       error: error.message,
     });
   }
 };
 
-// Forgot password function to send a reset code
-exports.forgotPassword = async (req, res) => {
+exports.resetPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
-    // Check if the email exists in the database
-    const user = await User.findOne({ where: { email } });
+    const [user] = await pool.query("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
 
-    if (!user) {
+    if (!user.length) {
       return res
         .status(404)
         .json({ success: false, message: "User not found." });
     }
 
-    // Generate a 5-digit reset code
-    const resetCode = Math.floor(10000 + Math.random() * 90000);
+    const [existingCode] = await pool.query(
+      "SELECT reset_code FROM password_reset_codes WHERE email = ? AND used = false AND created_at >= NOW() - INTERVAL 15 MINUTE",
+      [email]
+    );
 
-    // Save the reset code in the database
-    Code.create({
-      email: user.email,
-      reset_code: resetCode,
-      created_at: new Date(),
-      used: false,
-    });
+    let resetCode;
+    if (existingCode.length) {
+      resetCode = existingCode[0].reset_code;
+    } else {
+      resetCode = Math.floor(10000 + Math.random() * 90000);
+
+      await pool.query(
+        "DELETE FROM password_reset_codes WHERE email = ? AND created_at < NOW() - INTERVAL 15 MINUTE",
+        [email]
+      );
+
+      await pool.query(
+        "INSERT INTO password_reset_codes (email, reset_code, created_at, used) VALUES (?, ?, NOW(), false)",
+        [email, resetCode]
+      );
+    }
 
     res
       .status(200)
       .json({ success: true, message: "Password reset request received." });
 
-    // Configure nodemailer to send the reset code
     const transporter = nodemailer.createTransport({
       host: "smtp.zoho.com",
       port: 465,
@@ -177,60 +187,51 @@ exports.forgotPassword = async (req, res) => {
       html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Internal server error" });
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
   }
 };
 
-// Verify reset code function
-exports.verifyResetCode = async (req, res) => {
+exports.confirmPassword = async (req, res) => {
   const { email, reset_code } = req.body;
 
   try {
-    // Validate the reset code
-    if (!reset_code || isNaN(parseInt(reset_code))) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid or missing reset code." });
+    if (!reset_code || !/^\d{5}$/.test(reset_code)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid reset code format. Must be a 5-digit number.",
+      });
     }
 
-    // Check if the user exists
-    const user = await User.findOne({ where: { email } });
-    if (!user) {
+    const [user] = await pool.query("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
+    if (!user.length) {
       return res
         .status(404)
         .json({ success: false, message: "User not found." });
     }
 
-    // Look up the reset code in the database
-    const codeRecord = await Code.findOne({
-      where: { email, reset_code: parseInt(reset_code) },
-    });
-
-    if (!codeRecord) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid reset code." });
-    }
-
-    if (codeRecord.used) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Reset code already used." });
-    }
-
-    // Check if the reset code is expired
-    const now = new Date();
-    if (now - new Date(codeRecord.created_at) > 15 * 60 * 1000) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Reset code has expired." });
-    }
-
-    // Mark the reset code as used
-    await Code.update(
-      { used: true },
-      { where: { code_id: codeRecord.code_id } }
+    const [codeRecord] = await pool.query(
+      "SELECT * FROM password_reset_codes WHERE email = ? AND reset_code = ? AND created_at >= NOW() - INTERVAL 15 MINUTE AND used = false",
+      [email, parseInt(reset_code, 10)]
     );
+
+    if (!codeRecord.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid or expired reset code." });
+    }
+
+    if (!codeRecord[0].used) {
+      await pool.query(
+        "UPDATE password_reset_codes SET used = true WHERE code_id = ?",
+        [codeRecord[0].code_id]
+      );
+    }
 
     return res
       .status(200)

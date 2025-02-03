@@ -11,7 +11,7 @@ const eventRoutes = require("./routes/eventRoutes");
 
 app.use(`/api/auth`, authRoutes);
 app.use(`/api/`, departmentRoutes);
-app.use(`/api/user/`, userRoutes);
+app.use(`/api/users/`, userRoutes);
 app.use(`/api/events/`, eventRoutes);
 
 app.get("/", (req, res) => {

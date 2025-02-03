@@ -1,8 +1,8 @@
-const { Department } = require("../models");
+const { pool } = require("../config/db");
 
 exports.getDepartment = async (req, res) => {
   try {
-    const departments = await Department.findAll();
+    const [departments] = await pool.query("SELECT * FROM department");
 
     if (departments.length > 0) {
       const sortedDepartments = departments

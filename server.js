@@ -1,12 +1,13 @@
 const app = require("./app");
-const { sequelize } = require("./config/db");
+const { pool } = require("./config/db");
 
 console.log("Starting the server...");
 
 (async () => {
   try {
-    await sequelize.authenticate();
+    const connection = await pool.getConnection();
     console.log("Database connected successfully.");
+    connection.release();
 
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
