@@ -3,6 +3,6 @@ const router = express.Router();
 
 const eventController = require("../controllers/eventsController");
 
-router.route("/events").get(eventController.getEvents);
+router.route("/user/upcoming").post(eventController.userUpcomingEvents);
 
 module.exports = router;

@@ -1,69 +1,59 @@
 const { pool } = require("../config/db");
 
-exports.getEvents = async (req, res) => {
-  const {
-    departmentIds,
-    blockIds,
-    event_name_id,
-    venue,
-    description,
-    dates,
-    am_in,
-    am_out,
-    pm_in,
-    pm_out,
-    duration,
-  } = req.body;
-
-  if (
-    !Array.isArray(departmentIds) ||
-    !Array.isArray(blockIds) ||
-    !Array.isArray(dates) ||
-    !event_name_id ||
-    !venue
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid input. Check your fields.",
-    });
-  }
+exports.userUpcomingEvents = async (req, res) => {
+  const { block_id } = req.body;
+  const currentDate = new Date().toISOString().split("T")[0];
 
   try {
-    await pool.query("START TRANSACTION");
+    const query = `
+      SELECT 
+        events.event_id,
+        events.department_id,
+        events.block_id,
+        events.event_name_id, 
+        event_names.event_name,
+        events.venue, 
+        events.date_of_event,
+        events.scan_personnel
+      FROM events
+      JOIN event_names ON events.event_name_id = event_names.event_name_id
+      WHERE events.date_of_event >= ?  -- Only future events (including today)
+    `;
 
-    for (const deptId of departmentIds) {
-      for (const blockId of blockIds) {
-        for (const eventDate of dates) {
-          const query = `
-            INSERT INTO events 
-              (department_id, block_id, event_name_id, venue, date_of_event, am_in, am_out, pm_in, pm_out, duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `;
-          const params = [
-            deptId,
-            blockId,
-            event_name_id,
-            venue,
-            eventDate,
-            am_in,
-            am_out,
-            pm_in,
-            pm_out,
-            duration,
-          ];
+    const [allEvents] = await pool.query(query, [currentDate]);
 
-          await pool.query(query, params);
-        }
+    const filteredEvents = allEvents.filter(
+      (event) => event.block_id === null || event.block_id == block_id
+    );
+
+    const groupedEvents = {};
+    filteredEvents.forEach((event) => {
+      const groupKey = `${event.event_name_id}-${event.venue}-${event.scan_personnel}`;
+
+      if (!groupedEvents[groupKey]) {
+        groupedEvents[groupKey] = {
+          event_name_id: event.event_name_id,
+          event_name: event.event_name,
+          venue: event.venue,
+          scan_personnel: event.scan_personnel,
+          event_dates: [],
+        };
       }
-    }
 
-    await pool.query("COMMIT");
-    return res.status(201).json({
+      groupedEvents[groupKey].event_dates.push(event.date_of_event);
+    });
+
+    const formattedEvents = Object.values(groupedEvents).map((event) => ({
+      ...event,
+      event_dates: formatGroupedDates(event.event_dates),
+    }));
+
+    return res.json({
       success: true,
-      message: "Event(s) created successfully.",
+      events: formattedEvents,
     });
   } catch (error) {
-    await pool.query("ROLLBACK");
+    console.error("Error in getUserEvents:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -71,3 +61,53 @@ exports.getEvents = async (req, res) => {
     });
   }
 };
+
+function formatGroupedDates(dates) {
+  let formattedDates = [];
+  let currentRange = [];
+  let lastDay = null;
+  let currentMonthYear = "";
+
+  dates.sort((a, b) => new Date(a) - new Date(b));
+
+  dates.forEach((date, index) => {
+    const parsedDate = new Date(date);
+    const day = parsedDate.getDate();
+    const month = parsedDate.toLocaleString("en-US", { month: "long" });
+    const year = parsedDate.getFullYear();
+    const fullDate = `${month} ${year}`;
+
+    if (!lastDay) {
+      lastDay = parsedDate;
+      currentRange.push(day);
+      currentMonthYear = fullDate;
+    } else {
+      const diff = (parsedDate - lastDay) / (1000 * 60 * 60 * 24);
+
+      if (diff === 1) {
+        currentRange.push(day);
+      } else {
+        formattedDates.push(
+          `${currentMonthYear} ${formatDateRange(currentRange)}`
+        );
+        currentRange = [day];
+        currentMonthYear = fullDate;
+      }
+
+      lastDay = parsedDate;
+    }
+
+    if (index === dates.length - 1) {
+      formattedDates.push(`${formatDateRange(currentRange)} ${year}`);
+    }
+  });
+
+  return formattedDates.join(", ");
+}
+
+function formatDateRange(days) {
+  if (days.length >= 2) {
+    return `${days[0]}-${days[days.length - 1]}`;
+  }
+  return days.join(",");
+}
