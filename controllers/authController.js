@@ -82,21 +82,41 @@ exports.signup = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  const { student_id, password } = req.body;
+  const { id_number, password } = req.body;
 
   try {
     const [user] = await pool.query(
-      "SELECT * FROM users WHERE student_id = ?",
-      [student_id]
+      `SELECT u.*, d.department_id, b.block_id 
+       FROM users u
+       LEFT JOIN department d ON u.department_id = d.department_id
+       LEFT JOIN block b ON u.block_id = b.block_id
+       WHERE u.student_id = ?`,
+      [id_number]
     );
 
-    if (!user.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found." });
+    const [admin] = await pool.query(
+      "SELECT * FROM admins WHERE admin_id = ?",
+      [id_number]
+    );
+
+    let account = null;
+    let role = "";
+
+    if (user.length) {
+      account = user[0];
+      role = "user";
+    } else if (admin.length) {
+      account = admin[0];
+      role = "admin";
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user[0].password);
+    if (!account) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Account not found." });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, account.password);
     if (!isPasswordValid) {
       return res
         .status(401)
@@ -104,23 +124,43 @@ exports.login = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user[0].student_id, email: user[0].email, role: user[0].role },
+      { id: account.id, id_number, role },
       config.JWT_SECRET_KEY,
       { expiresIn: "7d" }
     );
 
-    return res.status(200).json({
-      success: true,
-      message: "Login successful.",
-      token,
-      user: {
-        student_id: user[0].student_id,
-        first_name: user[0].first_name,
-        last_name: user[0].last_name,
-        email: user[0].email,
-        block: user[0].block_id ? { id: user[0].block_id } : null,
-      },
-    });
+    if (role === "admin") {
+      return res.status(200).json({
+        success: true,
+        message: "Login successful.",
+        token,
+        user: {
+          id: account.id,
+          id_number,
+          first_name: account.first_name,
+          last_name: account.last_name,
+          email: account.email,
+          role: account.role,
+        },
+      });
+    } else {
+      return res.status(200).json({
+        success: true,
+        message: "Login successful.",
+        token,
+        user: {
+          id: account.id,
+          id_number,
+          first_name: account.first_name,
+          last_name: account.last_name,
+          department_id: account.department_id,
+          block_id: account.block_id,
+          year_level_id: account.year_level,
+          email: account.email,
+          role: account.role,
+        },
+      });
+    }
   } catch (error) {
     return res.status(500).json({
       success: false,
