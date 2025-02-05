@@ -14,7 +14,11 @@ exports.userUpcomingEvents = async (req, res) => {
         event_names.event_name,
         events.venue, 
         events.date_of_event,
-        events.scan_personnel
+        events.scan_personnel,
+        events.am_in,
+        events.am_out,
+        events.pm_in,
+        events.pm_out
       FROM events
       JOIN event_names ON events.event_name_id = event_names.event_name_id
       WHERE events.date_of_event >= ?  -- Only future events (including today)
@@ -22,9 +26,24 @@ exports.userUpcomingEvents = async (req, res) => {
 
     const [allEvents] = await pool.query(query, [currentDate]);
 
-    const filteredEvents = allEvents.filter(
-      (event) => event.block_id === null || event.block_id == block_id
-    );
+    const formatTime = (time) => {
+      if (!time) return null;
+      const [hours, minutes] = time.split(":");
+      const hour = parseInt(hours, 10);
+      const period = hour >= 12 ? "PM" : "AM";
+      const formattedHour = hour % 12 || 12;
+      return `${formattedHour}:${minutes} ${period}`;
+    };
+
+    const filteredEvents = allEvents
+      .map((event) => ({
+        ...event,
+        am_in: formatTime(event.am_in),
+        am_out: formatTime(event.am_out),
+        pm_in: formatTime(event.pm_in),
+        pm_out: formatTime(event.pm_out),
+      }))
+      .filter((event) => event.block_id === null || event.block_id == block_id);
 
     const groupedEvents = {};
     filteredEvents.forEach((event) => {
@@ -37,6 +56,10 @@ exports.userUpcomingEvents = async (req, res) => {
           venue: event.venue,
           scan_personnel: event.scan_personnel,
           event_dates: [],
+          am_in: event.am_in,
+          am_out: event.am_out,
+          pm_in: event.pm_in,
+          pm_out: event.pm_out,
         };
       }
 
@@ -63,46 +86,29 @@ exports.userUpcomingEvents = async (req, res) => {
 };
 
 function formatGroupedDates(dates) {
-  let formattedDates = [];
-  let currentRange = [];
-  let lastDay = null;
-  let currentMonthYear = "";
+  if (!dates || dates.length === 0) return "";
 
   dates.sort((a, b) => new Date(a) - new Date(b));
+
+  let formattedDates = [];
+  let month = "";
+  let year = "";
 
   dates.forEach((date, index) => {
     const parsedDate = new Date(date);
     const day = parsedDate.getDate();
-    const month = parsedDate.toLocaleString("en-US", { month: "long" });
-    const year = parsedDate.getFullYear();
-    const fullDate = `${month} ${year}`;
+    const currentMonth = parsedDate.toLocaleString("en-US", { month: "long" });
+    const currentYear = parsedDate.getFullYear();
 
-    if (!lastDay) {
-      lastDay = parsedDate;
-      currentRange.push(day);
-      currentMonthYear = fullDate;
-    } else {
-      const diff = (parsedDate - lastDay) / (1000 * 60 * 60 * 24);
-
-      if (diff === 1) {
-        currentRange.push(day);
-      } else {
-        formattedDates.push(
-          `${currentMonthYear} ${formatDateRange(currentRange)}`
-        );
-        currentRange = [day];
-        currentMonthYear = fullDate;
-      }
-
-      lastDay = parsedDate;
+    if (index === 0) {
+      month = currentMonth;
+      year = currentYear;
     }
 
-    if (index === dates.length - 1) {
-      formattedDates.push(`${formatDateRange(currentRange)} ${year}`);
-    }
+    formattedDates.push(day);
   });
 
-  return formattedDates.join(", ");
+  return `${month} ${formattedDates.join(",")} ${year}`;
 }
 
 function formatDateRange(days) {
