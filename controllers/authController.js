@@ -44,11 +44,9 @@ exports.signup = async (req, res) => {
     }
 
     const [emailExists] = await connection.query(
-      `
-      SELECT email FROM users WHERE LOWER(email) = LOWER(?)
-      UNION ALL
-      SELECT email FROM admins WHERE LOWER(email) = LOWER(?)
-      `,
+      `SELECT email FROM users WHERE LOWER(email) = LOWER(?) 
+       UNION ALL 
+       SELECT email FROM admins WHERE LOWER(email) = LOWER(?)`,
       [email, email]
     );
     if (emailExists.length) {
@@ -73,13 +71,6 @@ exports.signup = async (req, res) => {
       throw { status: 400, message: "User data does not match." };
     }
 
-    if (user[0].role_name === "Admin" || user[0].role_name === "Super Admin") {
-      throw {
-        status: 403,
-        message: "Admins cannot sign up through this portal.",
-      };
-    }
-
     if (user[0].password_hash) {
       throw {
         status: 400,
@@ -88,7 +79,6 @@ exports.signup = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
     await connection.query(
       "UPDATE users SET email = ?, password_hash = ? WHERE id_number = ?",
       [email, hashedPassword, id_number]
@@ -127,20 +117,20 @@ exports.login = async (req, res) => {
     connection = await pool.getConnection();
 
     const [accountData] = await connection.query(
-      `
-      SELECT users.id_number, users.first_name, users.last_name, users.email, users.password_hash, 
-             roles.name AS role, users.block_id, blocks.department_id, blocks.year_level_id 
+      `SELECT 
+        users.id_number, users.first_name, users.last_name, users.email, users.password_hash, 
+        roles.name AS role, users.block_id, blocks.department_id, blocks.year_level_id 
       FROM users 
       LEFT JOIN roles ON users.role_id = roles.id
       LEFT JOIN blocks ON users.block_id = blocks.id
-      WHERE users.id_number = ?
-      UNION ALL
-      SELECT admins.id_number, admins.first_name, admins.last_name, admins.email, admins.password_hash, 
-             roles.name AS role, NULL AS block_id, admins.department_id, NULL AS year_level_id 
+      WHERE users.id_number = ? 
+      UNION ALL 
+      SELECT 
+        admins.id_number, admins.first_name, admins.last_name, admins.email, admins.password_hash, 
+        roles.name AS role, NULL AS block_id, admins.department_id, NULL AS year_level_id 
       FROM admins 
       LEFT JOIN roles ON admins.role_id = roles.id
-      WHERE admins.id_number = ?
-      `,
+      WHERE admins.id_number = ?`,
       [id_number, id_number]
     );
 
@@ -173,15 +163,14 @@ exports.login = async (req, res) => {
       message: "Login successful.",
       token,
       user: {
-        id: account.id_number,
         id_number,
         first_name: account.first_name,
         last_name: account.last_name,
         email: account.email,
         role: account.role,
         department_id: account.department_id,
-        block_id: account.role === "user" ? account.block_id : null,
-        year_level_id: account.role === "user" ? account.year_level_id : null,
+        block_id: account.block_id || null,
+        year_level_id: account.year_level_id || null,
       },
     });
   } catch (error) {

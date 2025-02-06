@@ -3,6 +3,14 @@ const moment = require("moment");
 
 exports.userUpcomingEvents = async (req, res) => {
   const { block_id } = req.query;
+
+  if (!block_id) {
+    return res.status(400).json({
+      success: false,
+      message: "Block ID is required",
+    });
+  }
+
   const currentDate = new Date().toISOString().split("T")[0];
 
   try {
@@ -22,18 +30,15 @@ exports.userUpcomingEvents = async (req, res) => {
       JOIN event_names ON events.event_name_id = event_names.id
       JOIN event_dates ON events.id = event_dates.event_id
       LEFT JOIN event_blocks ON events.id = event_blocks.event_id
-      WHERE event_dates.event_date >= ?  -- Only future events (including today)
+      WHERE event_dates.event_date >= ?  
+      AND (
+        event_blocks.block_id = ? 
+        OR event_blocks.block_id IS NULL 
+      )
+      AND event_blocks.event_id IS NOT NULL 
     `;
 
-    if (block_id) {
-      query +=
-        " AND (event_blocks.block_id = ? OR event_blocks.block_id IS NULL)";
-    }
-
-    const [allEvents] = await pool.query(
-      query,
-      block_id ? [currentDate, block_id] : [currentDate]
-    );
+    const [allEvents] = await pool.query(query, [currentDate, block_id]);
 
     const groupedEvents = {};
 
@@ -55,8 +60,9 @@ exports.userUpcomingEvents = async (req, res) => {
       }
 
       const formattedEventDate = moment(event.date_of_event).format(
-        "MMMM D, YYYY"
+        "YYYY-MM-DD"
       );
+
       const formattedAmIn = moment
         .utc(event.am_in, "HH:mm:ss")
         .format("HH:mm:ss");
