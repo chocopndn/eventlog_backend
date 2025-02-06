@@ -2,14 +2,11 @@ const { pool } = require("../config/db");
 
 exports.getDepartment = async (req, res) => {
   try {
-    const [departments] = await pool.query("SELECT * FROM department");
+    const [departments] = await pool.query("SELECT * FROM departments");
 
     if (departments.length > 0) {
       const sortedDepartments = departments
-        .map(({ department_id, department_name }) => ({
-          department_id,
-          department_name,
-        }))
+        .map(({ id, name }) => ({ department_id: id, department_name: name }))
         .sort((a, b) => a.department_id - b.department_id);
 
       return res.status(200).json({

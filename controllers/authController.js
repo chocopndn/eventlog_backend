@@ -6,7 +6,7 @@ const config = require("../config/config");
 
 exports.signup = async (req, res) => {
   const {
-    student_id,
+    id_number,
     first_name,
     middle_name,
     last_name,
@@ -16,107 +16,146 @@ exports.signup = async (req, res) => {
     department_id,
   } = req.body;
 
+  if (
+    !id_number ||
+    !first_name ||
+    !last_name ||
+    !email ||
+    !password ||
+    !department_id
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "All required fields must be provided.",
+    });
+  }
+
+  let connection;
   try {
-    const [department] = await pool.query(
-      "SELECT 1 FROM department WHERE department_id = ?",
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [department] = await connection.query(
+      "SELECT 1 FROM departments WHERE id = ?",
       [department_id]
     );
     if (!department.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid department ID." });
+      throw { status: 400, message: "Invalid department ID." };
     }
 
-    const [user] = await pool.query(
-      `SELECT * FROM users 
-       WHERE student_id = ? 
-       AND LOWER(first_name) = LOWER(?) 
-       AND LOWER(middle_name) = LOWER(?) 
-       AND LOWER(last_name) = LOWER(?) 
-       AND COALESCE(suffix, '') = COALESCE(?, '') 
-       AND department_id = ?`,
-      [student_id, first_name, middle_name, last_name, suffix, department_id]
+    const [emailExists] = await connection.query(
+      `
+      SELECT email FROM users WHERE LOWER(email) = LOWER(?)
+      UNION ALL
+      SELECT email FROM admins WHERE LOWER(email) = LOWER(?)
+      `,
+      [email, email]
+    );
+    if (emailExists.length) {
+      throw { status: 400, message: "Email is already in use." };
+    }
+
+    const [user] = await connection.query(
+      `SELECT users.*, roles.name AS role_name, blocks.department_id 
+       FROM users 
+       LEFT JOIN roles ON users.role_id = roles.id
+       LEFT JOIN blocks ON users.block_id = blocks.id
+       WHERE users.id_number = ? 
+       AND LOWER(users.first_name) = LOWER(?) 
+       AND LOWER(users.middle_name) = LOWER(?) 
+       AND LOWER(users.last_name) = LOWER(?) 
+       AND COALESCE(users.suffix, '') = COALESCE(?, '') 
+       AND blocks.department_id = ?`,
+      [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
 
     if (!user.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Student data does not match. User not created.",
-      });
+      throw { status: 400, message: "User data does not match." };
     }
 
-    if (user[0].password) {
-      return res.status(400).json({
-        success: false,
+    if (user[0].role_name === "Admin" || user[0].role_name === "Super Admin") {
+      throw {
+        status: 403,
+        message: "Admins cannot sign up through this portal.",
+      };
+    }
+
+    if (user[0].password_hash) {
+      throw {
+        status: 400,
         message: "User already has an account. Please log in.",
-      });
-    }
-
-    const [existingEmail] = await pool.query(
-      "SELECT 1 FROM users WHERE email = ?",
-      [email]
-    );
-    if (existingEmail.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email is already in use." });
+      };
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    await pool.query(
-      "UPDATE users SET email = ?, password = ? WHERE student_id = ?",
-      [email, hashedPassword, student_id]
+    await connection.query(
+      "UPDATE users SET email = ?, password_hash = ? WHERE id_number = ?",
+      [email, hashedPassword, id_number]
     );
 
-    return res
-      .status(200)
-      .json({ success: true, message: "User account successfully created." });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
+    await connection.commit();
+
+    return res.status(200).json({
+      success: true,
+      message: "User account successfully created.",
     });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error("Error in signup:", error);
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message || "Internal server error",
+    });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
 exports.login = async (req, res) => {
   const { id_number, password } = req.body;
 
+  if (!id_number || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "ID number and password are required.",
+    });
+  }
+
+  let connection;
   try {
-    const [user] = await pool.query(
-      `SELECT u.*, d.department_id, b.block_id 
-       FROM users u
-       LEFT JOIN department d ON u.department_id = d.department_id
-       LEFT JOIN block b ON u.block_id = b.block_id
-       WHERE u.student_id = ?`,
-      [id_number]
+    connection = await pool.getConnection();
+
+    const [accountData] = await connection.query(
+      `
+      SELECT users.id_number, users.first_name, users.last_name, users.email, users.password_hash, 
+             roles.name AS role, users.block_id, blocks.department_id, blocks.year_level_id 
+      FROM users 
+      LEFT JOIN roles ON users.role_id = roles.id
+      LEFT JOIN blocks ON users.block_id = blocks.id
+      WHERE users.id_number = ?
+      UNION ALL
+      SELECT admins.id_number, admins.first_name, admins.last_name, admins.email, admins.password_hash, 
+             roles.name AS role, NULL AS block_id, admins.department_id, NULL AS year_level_id 
+      FROM admins 
+      LEFT JOIN roles ON admins.role_id = roles.id
+      WHERE admins.id_number = ?
+      `,
+      [id_number, id_number]
     );
 
-    const [admin] = await pool.query(
-      "SELECT * FROM admins WHERE admin_id = ?",
-      [id_number]
-    );
-
-    let account = null;
-    let role = "";
-
-    if (user.length) {
-      account = user[0];
-      role = "user";
-    } else if (admin.length) {
-      account = admin[0];
-      role = "admin";
-    }
-
-    if (!account) {
+    if (!accountData.length) {
       return res
         .status(404)
         .json({ success: false, message: "Account not found." });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, account.password);
+    const account = accountData[0];
+
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      account.password_hash
+    );
     if (!isPasswordValid) {
       return res
         .status(401)
@@ -124,92 +163,99 @@ exports.login = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: account.id, id_number, role },
+      { id: account.id_number, id_number, role: account.role },
       config.JWT_SECRET_KEY,
       { expiresIn: "7d" }
     );
 
-    if (role === "admin") {
-      return res.status(200).json({
-        success: true,
-        message: "Login successful.",
-        token,
-        user: {
-          id: account.id,
-          id_number,
-          first_name: account.first_name,
-          last_name: account.last_name,
-          email: account.email,
-          role: account.role,
-        },
-      });
-    } else {
-      return res.status(200).json({
-        success: true,
-        message: "Login successful.",
-        token,
-        user: {
-          id: account.id,
-          id_number,
-          first_name: account.first_name,
-          last_name: account.last_name,
-          department_id: account.department_id,
-          block_id: account.block_id,
-          year_level_id: account.year_level,
-          email: account.email,
-          role: account.role,
-        },
-      });
-    }
+    return res.status(200).json({
+      success: true,
+      message: "Login successful.",
+      token,
+      user: {
+        id: account.id_number,
+        id_number,
+        first_name: account.first_name,
+        last_name: account.last_name,
+        email: account.email,
+        role: account.role,
+        department_id: account.department_id,
+        block_id: account.role === "user" ? account.block_id : null,
+        year_level_id: account.role === "user" ? account.year_level_id : null,
+      },
+    });
   } catch (error) {
+    console.error("Error in login:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
       error: error.message,
     });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
 exports.resetPassword = async (req, res) => {
   const { email } = req.body;
 
+  if (!email) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Email is required." });
+  }
+
+  let connection;
   try {
-    const [user] = await pool.query("SELECT * FROM users WHERE email = ?", [
-      email,
-    ]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-    if (!user.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found." });
-    }
-
-    const [existingCode] = await pool.query(
-      "SELECT reset_code FROM password_reset_codes WHERE email = ? AND used = false AND created_at >= NOW() - INTERVAL 15 MINUTE",
+    const [user] = await connection.query(
+      "SELECT id_number FROM users WHERE LOWER(email) = LOWER(?)",
+      [email]
+    );
+    const [admin] = await connection.query(
+      "SELECT id_number FROM admins WHERE LOWER(email) = LOWER(?)",
       [email]
     );
 
-    let resetCode;
-    if (existingCode.length) {
-      resetCode = existingCode[0].reset_code;
-    } else {
-      resetCode = Math.floor(10000 + Math.random() * 90000);
-
-      await pool.query(
-        "DELETE FROM password_reset_codes WHERE email = ? AND created_at < NOW() - INTERVAL 15 MINUTE",
-        [email]
-      );
-
-      await pool.query(
-        "INSERT INTO password_reset_codes (email, reset_code, created_at, used) VALUES (?, ?, NOW(), false)",
-        [email, resetCode]
-      );
+    if (!user.length && !admin.length) {
+      throw { status: 404, message: "User not found." };
     }
+
+    const resetCode = Math.floor(10000 + Math.random() * 90000);
+
+    await connection.query("DELETE FROM password_reset_codes WHERE email = ?", [
+      email,
+    ]);
+
+    await connection.query(
+      "INSERT INTO password_reset_codes (email, reset_code, created_at, used) VALUES (?, ?, NOW(), false)",
+      [email, resetCode]
+    );
+
+    await connection.commit();
 
     res
       .status(200)
       .json({ success: true, message: "Password reset request received." });
 
+    sendResetEmail(email, resetCode);
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error("Error in resetPassword:", error);
+
+    res.status(error.status || 500).json({
+      success: false,
+      message: error.message || "Internal server error",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+const sendResetEmail = async (email, resetCode) => {
+  try {
     const transporter = nodemailer.createTransport({
       host: "smtp.zoho.com",
       port: 465,
@@ -226,61 +272,71 @@ exports.resetPassword = async (req, res) => {
       text: `Your password reset code is: ${resetCode}`,
       html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
+
+    console.log(`Password reset email sent to ${email}`);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
+    console.error("Error sending reset email:", error);
   }
 };
 
 exports.confirmPassword = async (req, res) => {
   const { email, reset_code } = req.body;
 
-  try {
-    if (!reset_code || !/^\d{5}$/.test(reset_code)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid reset code format. Must be a 5-digit number.",
-      });
-    }
+  if (!email || !reset_code || !/^\d{5}$/.test(reset_code)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid input. Email and a 5-digit reset code are required.",
+    });
+  }
 
-    const [user] = await pool.query("SELECT * FROM users WHERE email = ?", [
-      email,
-    ]);
-    if (!user.length) {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+
+    const [user] = await connection.query(
+      "SELECT id_number FROM users WHERE LOWER(email) = LOWER(?)",
+      [email]
+    );
+    const [admin] = await connection.query(
+      "SELECT id_number FROM admins WHERE LOWER(email) = LOWER(?)",
+      [email]
+    );
+
+    if (!user.length && !admin.length) {
       return res
         .status(404)
         .json({ success: false, message: "User not found." });
     }
 
-    const [codeRecord] = await pool.query(
-      "SELECT * FROM password_reset_codes WHERE email = ? AND reset_code = ? AND created_at >= NOW() - INTERVAL 15 MINUTE AND used = false",
+    const [codeRecord] = await connection.query(
+      "SELECT id FROM password_reset_codes WHERE LOWER(email) = LOWER(?) AND reset_code = ? AND created_at >= NOW() - INTERVAL 15 MINUTE AND used = false",
       [email, parseInt(reset_code, 10)]
     );
 
     if (!codeRecord.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid or expired reset code." });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset code.",
+      });
     }
 
-    if (!codeRecord[0].used) {
-      await pool.query(
-        "UPDATE password_reset_codes SET used = true WHERE code_id = ?",
-        [codeRecord[0].code_id]
-      );
-    }
+    await connection.query(
+      "UPDATE password_reset_codes SET used = true WHERE id = ?",
+      [codeRecord[0].id]
+    );
 
-    return res
-      .status(200)
-      .json({ success: true, message: "Reset code verified successfully." });
+    return res.status(200).json({
+      success: true,
+      message: "Reset code verified successfully.",
+    });
   } catch (error) {
+    console.error("Error in confirmPassword:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
       error: error.message,
     });
+  } finally {
+    if (connection) connection.release();
   }
 };

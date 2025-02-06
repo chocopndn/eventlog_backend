@@ -1,82 +1,91 @@
 const { pool } = require("../config/db");
+const moment = require("moment");
 
 exports.userUpcomingEvents = async (req, res) => {
-  const { block_id } = req.body;
+  const { block_id } = req.query;
   const currentDate = new Date().toISOString().split("T")[0];
 
   try {
-    const query = `
+    let query = `
       SELECT 
-        events.event_id,
-        events.department_id,
-        events.block_id,
+        events.id AS event_id,
         events.event_name_id, 
-        event_names.event_name,
+        event_names.name AS event_name,
         events.venue, 
-        events.date_of_event,
-        events.scan_personnel,
-        events.am_in,
-        events.am_out,
-        events.pm_in,
-        events.pm_out
+        event_dates.event_date AS date_of_event,
+        event_dates.am_in,
+        event_dates.am_out,
+        event_dates.pm_in,
+        event_dates.pm_out,
+        events.scan_personnel
       FROM events
-      JOIN event_names ON events.event_name_id = event_names.event_name_id
-      WHERE events.date_of_event >= ?  -- Only future events (including today)
+      JOIN event_names ON events.event_name_id = event_names.id
+      JOIN event_dates ON events.id = event_dates.event_id
+      LEFT JOIN event_blocks ON events.id = event_blocks.event_id
+      WHERE event_dates.event_date >= ?  -- Only future events (including today)
     `;
 
-    const [allEvents] = await pool.query(query, [currentDate]);
+    if (block_id) {
+      query +=
+        " AND (event_blocks.block_id = ? OR event_blocks.block_id IS NULL)";
+    }
 
-    const formatTime = (time) => {
-      if (!time) return null;
-      const [hours, minutes] = time.split(":");
-      const hour = parseInt(hours, 10);
-      const period = hour >= 12 ? "PM" : "AM";
-      const formattedHour = hour % 12 || 12;
-      return `${formattedHour}:${minutes} ${period}`;
-    };
-
-    const filteredEvents = allEvents
-      .map((event) => ({
-        ...event,
-        am_in: formatTime(event.am_in),
-        am_out: formatTime(event.am_out),
-        pm_in: formatTime(event.pm_in),
-        pm_out: formatTime(event.pm_out),
-      }))
-      .filter((event) => event.block_id === null || event.block_id == block_id);
+    const [allEvents] = await pool.query(
+      query,
+      block_id ? [currentDate, block_id] : [currentDate]
+    );
 
     const groupedEvents = {};
-    filteredEvents.forEach((event) => {
-      const groupKey = `${event.event_name_id}-${event.venue}-${event.scan_personnel}`;
 
-      if (!groupedEvents[groupKey]) {
-        groupedEvents[groupKey] = {
-          event_name_id: event.event_name_id,
+    allEvents.forEach((event) => {
+      const eventKey = event.event_name_id;
+
+      if (!groupedEvents[eventKey]) {
+        groupedEvents[eventKey] = {
+          event_id: event.event_id,
           event_name: event.event_name,
           venue: event.venue,
           scan_personnel: event.scan_personnel,
-          event_dates: [],
           am_in: event.am_in,
           am_out: event.am_out,
           pm_in: event.pm_in,
           pm_out: event.pm_out,
+          dates: [],
         };
       }
 
-      groupedEvents[groupKey].event_dates.push(event.date_of_event);
+      const formattedEventDate = moment(event.date_of_event).format(
+        "MMMM D, YYYY"
+      );
+      const formattedAmIn = moment
+        .utc(event.am_in, "HH:mm:ss")
+        .format("HH:mm:ss");
+      const formattedAmOut = moment
+        .utc(event.am_out, "HH:mm:ss")
+        .format("HH:mm:ss");
+      const formattedPmIn = moment
+        .utc(event.pm_in, "HH:mm:ss")
+        .format("HH:mm:ss");
+      const formattedPmOut = moment
+        .utc(event.pm_out, "HH:mm:ss")
+        .format("HH:mm:ss");
+
+      groupedEvents[eventKey].dates.push(formattedEventDate);
+
+      groupedEvents[eventKey].am_in = formattedAmIn;
+      groupedEvents[eventKey].am_out = formattedAmOut;
+      groupedEvents[eventKey].pm_in = formattedPmIn;
+      groupedEvents[eventKey].pm_out = formattedPmOut;
     });
 
-    const formattedEvents = Object.values(groupedEvents).map((event) => ({
-      ...event,
-      event_dates: formatGroupedDates(event.event_dates),
-    }));
+    const formattedEvents = Object.values(groupedEvents);
 
     return res.json({
       success: true,
       events: formattedEvents,
     });
   } catch (error) {
-    console.error("Error in getUserEvents:", error);
+    console.error("Error in userUpcomingEvents:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -84,36 +93,3 @@ exports.userUpcomingEvents = async (req, res) => {
     });
   }
 };
-
-function formatGroupedDates(dates) {
-  if (!dates || dates.length === 0) return "";
-
-  dates.sort((a, b) => new Date(a) - new Date(b));
-
-  let formattedDates = [];
-  let month = "";
-  let year = "";
-
-  dates.forEach((date, index) => {
-    const parsedDate = new Date(date);
-    const day = parsedDate.getDate();
-    const currentMonth = parsedDate.toLocaleString("en-US", { month: "long" });
-    const currentYear = parsedDate.getFullYear();
-
-    if (index === 0) {
-      month = currentMonth;
-      year = currentYear;
-    }
-
-    formattedDates.push(day);
-  });
-
-  return `${month} ${formattedDates.join(",")} ${year}`;
-}
-
-function formatDateRange(days) {
-  if (days.length >= 2) {
-    return `${days[0]}-${days[days.length - 1]}`;
-  }
-  return days.join(",");
-}
