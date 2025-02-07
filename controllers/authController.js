@@ -134,7 +134,7 @@ exports.login = async (req, res) => {
       [id_number, id_number]
     );
 
-    if (!accountData.length) {
+    if (!accountData.length || !accountData[0].password_hash) {
       return res
         .status(404)
         .json({ success: false, message: "Account not found." });
