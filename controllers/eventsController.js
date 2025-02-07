@@ -40,6 +40,13 @@ exports.userUpcomingEvents = async (req, res) => {
 
     const [allEvents] = await pool.query(query, [currentDate, block_id]);
 
+    if (!allEvents.length) {
+      return res.json({
+        success: true,
+        events: [],
+      });
+    }
+
     const groupedEvents = {};
 
     allEvents.forEach((event) => {
@@ -51,11 +58,11 @@ exports.userUpcomingEvents = async (req, res) => {
           event_name: event.event_name,
           venue: event.venue,
           scan_personnel: event.scan_personnel,
-          am_in: event.am_in,
-          am_out: event.am_out,
-          pm_in: event.pm_in,
-          pm_out: event.pm_out,
           dates: [],
+          am_in: null,
+          am_out: null,
+          pm_in: null,
+          pm_out: null,
         };
       }
 
@@ -63,28 +70,29 @@ exports.userUpcomingEvents = async (req, res) => {
         "YYYY-MM-DD"
       );
 
-      const formattedAmIn = moment
-        .utc(event.am_in, "HH:mm:ss")
-        .format("HH:mm:ss");
-      const formattedAmOut = moment
-        .utc(event.am_out, "HH:mm:ss")
-        .format("HH:mm:ss");
-      const formattedPmIn = moment
-        .utc(event.pm_in, "HH:mm:ss")
-        .format("HH:mm:ss");
-      const formattedPmOut = moment
-        .utc(event.pm_out, "HH:mm:ss")
-        .format("HH:mm:ss");
-
       groupedEvents[eventKey].dates.push(formattedEventDate);
 
-      groupedEvents[eventKey].am_in = formattedAmIn;
-      groupedEvents[eventKey].am_out = formattedAmOut;
-      groupedEvents[eventKey].pm_in = formattedPmIn;
-      groupedEvents[eventKey].pm_out = formattedPmOut;
+      groupedEvents[eventKey].am_in = event.am_in
+        ? moment.utc(event.am_in, "HH:mm:ss").format("HH:mm:ss")
+        : null;
+      groupedEvents[eventKey].am_out = event.am_out
+        ? moment.utc(event.am_out, "HH:mm:ss").format("HH:mm:ss")
+        : null;
+      groupedEvents[eventKey].pm_in = event.pm_in
+        ? moment.utc(event.pm_in, "HH:mm:ss").format("HH:mm:ss")
+        : null;
+      groupedEvents[eventKey].pm_out = event.pm_out
+        ? moment.utc(event.pm_out, "HH:mm:ss").format("HH:mm:ss")
+        : null;
     });
 
-    const formattedEvents = Object.values(groupedEvents);
+    let formattedEvents = Object.values(groupedEvents);
+
+    formattedEvents.forEach((event) => {
+      event.dates.sort((a, b) => new Date(a) - new Date(b));
+    });
+
+    formattedEvents.sort((a, b) => new Date(a.dates[0]) - new Date(b.dates[0]));
 
     return res.json({
       success: true,
