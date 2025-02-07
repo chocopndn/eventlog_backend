@@ -4,6 +4,34 @@ const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const config = require("../config/config");
 
+const handleError = (res, error, defaultMessage = "Internal server error") => {
+  return res.status(error.status || 500).json({
+    success: false,
+    message: error.message || defaultMessage,
+  });
+};
+
+const getUserQuery = () => {
+  return `
+    SELECT 
+      users.id_number, 
+      users.first_name, 
+      users.middle_name,
+      users.last_name, 
+      users.suffix,
+      users.email, 
+      roles.name AS role_name,
+      year_levels.name AS year_level_name,
+      blocks.name AS block_name,
+      departments.name AS department_name
+    FROM users
+    LEFT JOIN roles ON users.role_id = roles.id
+    LEFT JOIN blocks ON users.block_id = blocks.id
+    LEFT JOIN departments ON blocks.department_id = departments.id
+    LEFT JOIN year_levels ON blocks.year_level_id = year_levels.id
+  `;
+};
+
 exports.signup = async (req, res) => {
   const {
     id_number,
@@ -24,12 +52,10 @@ exports.signup = async (req, res) => {
     !password ||
     !department_id
   ) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "All required fields must be provided.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "All required fields must be provided.",
+    });
   }
 
   let connection;
@@ -38,14 +64,14 @@ exports.signup = async (req, res) => {
     await connection.beginTransaction();
 
     const [userRecords] = await connection.query(
-      `SELECT users.*, blocks.department_id 
-       FROM users 
+      `SELECT users.*, blocks.department_id
+       FROM users
        JOIN blocks ON users.block_id = blocks.id
        WHERE users.id_number = ? 
        AND users.first_name = ? 
-       AND (users.middle_name IS NULL OR users.middle_name = ?) 
+       AND (users.middle_name IS NULL OR users.middle_name = ?)
        AND users.last_name = ? 
-       AND (users.suffix IS NULL OR users.suffix = ?) 
+       AND (users.suffix IS NULL OR users.suffix = ?)
        AND blocks.department_id = ?`,
       [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
@@ -87,12 +113,7 @@ exports.signup = async (req, res) => {
       .json({ success: true, message: "User account successfully created." });
   } catch (error) {
     if (connection) await connection.rollback();
-    return res
-      .status(error.status || 500)
-      .json({
-        success: false,
-        message: error.message || "Internal server error",
-      });
+    return handleError(res, error);
   } finally {
     if (connection) connection.release();
   }
@@ -102,12 +123,10 @@ exports.login = async (req, res) => {
   const { id_number, password } = req.body;
 
   if (!id_number || !password) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "ID number and password are required.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "ID number and password are required.",
+    });
   }
 
   let connection;
@@ -127,9 +146,7 @@ exports.login = async (req, res) => {
        FROM users 
        LEFT JOIN blocks ON users.block_id = blocks.id 
        WHERE users.id_number = ? 
-    
        UNION 
-    
        SELECT 
           admins.id_number, 
           admins.first_name, 
@@ -183,13 +200,7 @@ exports.login = async (req, res) => {
       },
     });
   } catch (error) {
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Internal server error",
-        error: error.message,
-      });
+    return handleError(res, error);
   } finally {
     if (connection) connection.release();
   }
@@ -228,7 +239,6 @@ exports.resetPassword = async (req, res) => {
     await connection.query("DELETE FROM password_reset_codes WHERE email = ?", [
       email,
     ]);
-
     await connection.query(
       "INSERT INTO password_reset_codes (email, reset_code, created_at, used) VALUES (?, ?, NOW(), 0)",
       [email, resetCode]
@@ -240,32 +250,9 @@ exports.resetPassword = async (req, res) => {
 
     sendResetEmail(email, resetCode);
   } catch (error) {
-    res.status(500).json({ success: false, message: "Internal server error" });
+    return handleError(res, error, "Error while resetting password.");
   } finally {
     if (connection) connection.release();
-  }
-};
-
-const sendResetEmail = async (email, resetCode) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.zoho.com",
-      port: 465,
-      auth: {
-        user: config.EMAIL_USER,
-        pass: config.EMAIL_PASS,
-      },
-    });
-
-    await transporter.sendMail({
-      from: '"Eventlog" <eventlogucv@zohomail.com>',
-      to: email,
-      subject: "Password Reset Request",
-      text: `Your password reset code is: ${resetCode}`,
-      html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
-    });
-  } catch (error) {
-    console.error("Error sending reset email:", error);
   }
 };
 
@@ -273,12 +260,10 @@ exports.confirmPassword = async (req, res) => {
   const { email, reset_code } = req.body;
 
   if (!email || !reset_code || !/^\d{5}$/.test(reset_code)) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "Invalid input. Email and a 5-digit reset code are required.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "Invalid input. Email and a 5-digit reset code are required.",
+    });
   }
 
   let connection;
@@ -320,9 +305,7 @@ exports.confirmPassword = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Reset code verified successfully." });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
+    return handleError(res, error);
   } finally {
     if (connection) connection.release();
   }

@@ -1,5 +1,13 @@
 const { pool } = require("../config/db");
 
+const handleError = (res, error, defaultMessage = "Internal server error") => {
+  console.error(error);
+  return res.status(error.status || 500).json({
+    success: false,
+    message: error.message || defaultMessage,
+  });
+};
+
 exports.getDepartment = async (req, res) => {
   try {
     const [departments] = await pool.query(
@@ -14,8 +22,6 @@ exports.getDepartment = async (req, res) => {
 
     return res.status(200).json({ success: true, departments });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
+    return handleError(res, error);
   }
 };

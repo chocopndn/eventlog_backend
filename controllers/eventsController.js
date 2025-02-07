@@ -1,6 +1,14 @@
 const { pool } = require("../config/db");
 const moment = require("moment");
 
+const handleError = (res, error, defaultMessage = "Internal server error") => {
+  console.error(error);
+  return res.status(error.status || 500).json({
+    success: false,
+    message: error.message || defaultMessage,
+  });
+};
+
 exports.userUpcomingEvents = async (req, res) => {
   const { block_id } = req.query;
 
@@ -11,10 +19,10 @@ exports.userUpcomingEvents = async (req, res) => {
     });
   }
 
-  const currentDate = new Date().toISOString().split("T")[0];
+  const currentDate = moment().format("YYYY-MM-DD");
 
   try {
-    let query = `
+    const query = `
       SELECT 
         events.id AS event_id,
         events.event_name_id, 
@@ -73,16 +81,16 @@ exports.userUpcomingEvents = async (req, res) => {
       groupedEvents[eventKey].dates.push(formattedEventDate);
 
       groupedEvents[eventKey].am_in = event.am_in
-        ? moment.utc(event.am_in, "HH:mm:ss").format("HH:mm:ss")
+        ? moment(event.am_in, "HH:mm:ss").format("HH:mm:ss")
         : null;
       groupedEvents[eventKey].am_out = event.am_out
-        ? moment.utc(event.am_out, "HH:mm:ss").format("HH:mm:ss")
+        ? moment(event.am_out, "HH:mm:ss").format("HH:mm:ss")
         : null;
       groupedEvents[eventKey].pm_in = event.pm_in
-        ? moment.utc(event.pm_in, "HH:mm:ss").format("HH:mm:ss")
+        ? moment(event.pm_in, "HH:mm:ss").format("HH:mm:ss")
         : null;
       groupedEvents[eventKey].pm_out = event.pm_out
-        ? moment.utc(event.pm_out, "HH:mm:ss").format("HH:mm:ss")
+        ? moment(event.pm_out, "HH:mm:ss").format("HH:mm:ss")
         : null;
     });
 
@@ -99,11 +107,6 @@ exports.userUpcomingEvents = async (req, res) => {
       events: formattedEvents,
     });
   } catch (error) {
-    console.error("Error in userUpcomingEvents:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
+    return handleError(res, error);
   }
 };
