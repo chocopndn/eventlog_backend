@@ -8,7 +8,7 @@ exports.signup = async (req, res) => {
   const {
     id_number,
     first_name,
-    middle_name,
+    middle_name = null,
     last_name,
     suffix = null,
     email,
@@ -24,10 +24,12 @@ exports.signup = async (req, res) => {
     !password ||
     !department_id
   ) {
-    return res.status(400).json({
-      success: false,
-      message: "All required fields must be provided.",
-    });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "All required fields must be provided.",
+      });
   }
 
   let connection;
@@ -35,47 +37,41 @@ exports.signup = async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    const [department] = await connection.query(
-      "SELECT 1 FROM departments WHERE id = ?",
-      [department_id]
-    );
-    if (!department.length) {
-      throw { status: 400, message: "Invalid department ID." };
-    }
-
-    const [emailExists] = await connection.query(
-      `SELECT email FROM users WHERE LOWER(email) = LOWER(?) 
-       UNION ALL 
-       SELECT email FROM admins WHERE LOWER(email) = LOWER(?)`,
-      [email, email]
-    );
-    if (emailExists.length) {
-      throw { status: 400, message: "Email is already in use." };
-    }
-
-    const [user] = await connection.query(
-      `SELECT users.*, roles.name AS role_name, blocks.department_id 
+    const [userRecords] = await connection.query(
+      `SELECT users.*, blocks.department_id 
        FROM users 
-       LEFT JOIN roles ON users.role_id = roles.id
-       LEFT JOIN blocks ON users.block_id = blocks.id
+       JOIN blocks ON users.block_id = blocks.id
        WHERE users.id_number = ? 
-       AND LOWER(users.first_name) = LOWER(?) 
-       AND LOWER(users.middle_name) = LOWER(?) 
-       AND LOWER(users.last_name) = LOWER(?) 
-       AND COALESCE(users.suffix, '') = COALESCE(?, '') 
+       AND users.first_name = ? 
+       AND (users.middle_name IS NULL OR users.middle_name = ?) 
+       AND users.last_name = ? 
+       AND (users.suffix IS NULL OR users.suffix = ?) 
        AND blocks.department_id = ?`,
       [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
 
-    if (!user.length) {
+    if (!userRecords.length) {
       throw { status: 400, message: "User data does not match." };
     }
 
-    if (user[0].password_hash) {
+    const existingUser = userRecords[0];
+
+    if (existingUser.password_hash) {
       throw {
         status: 400,
         message: "User already has an account. Please log in.",
       };
+    }
+
+    const [emailRecords] = await connection.query(
+      `SELECT email FROM users WHERE LOWER(email) = LOWER(?) 
+       UNION 
+       SELECT email FROM admins WHERE LOWER(email) = LOWER(?)`,
+      [email, email]
+    );
+
+    if (emailRecords.length) {
+      throw { status: 400, message: "Email is already in use." };
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -86,17 +82,17 @@ exports.signup = async (req, res) => {
 
     await connection.commit();
 
-    return res.status(200).json({
-      success: true,
-      message: "User account successfully created.",
-    });
+    return res
+      .status(200)
+      .json({ success: true, message: "User account successfully created." });
   } catch (error) {
     if (connection) await connection.rollback();
-    console.error("Error in signup:", error);
-    return res.status(error.status || 500).json({
-      success: false,
-      message: error.message || "Internal server error",
-    });
+    return res
+      .status(error.status || 500)
+      .json({
+        success: false,
+        message: error.message || "Internal server error",
+      });
   } finally {
     if (connection) connection.release();
   }
@@ -106,10 +102,12 @@ exports.login = async (req, res) => {
   const { id_number, password } = req.body;
 
   if (!id_number || !password) {
-    return res.status(400).json({
-      success: false,
-      message: "ID number and password are required.",
-    });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "ID number and password are required.",
+      });
   }
 
   let connection;
@@ -118,23 +116,35 @@ exports.login = async (req, res) => {
 
     const [accountData] = await connection.query(
       `SELECT 
-        users.id_number, users.first_name, users.last_name, users.email, users.password_hash, 
-        roles.name AS role, users.block_id, blocks.department_id, blocks.year_level_id 
-      FROM users 
-      LEFT JOIN roles ON users.role_id = roles.id
-      LEFT JOIN blocks ON users.block_id = blocks.id
-      WHERE users.id_number = ? 
-      UNION ALL 
-      SELECT 
-        admins.id_number, admins.first_name, admins.last_name, admins.email, admins.password_hash, 
-        roles.name AS role, NULL AS block_id, admins.department_id, NULL AS year_level_id 
-      FROM admins 
-      LEFT JOIN roles ON admins.role_id = roles.id
-      WHERE admins.id_number = ?`,
+          users.id_number, 
+          users.first_name, 
+          users.last_name, 
+          users.email, 
+          users.password_hash, 
+          users.block_id, 
+          blocks.department_id, 
+          users.role_id 
+       FROM users 
+       LEFT JOIN blocks ON users.block_id = blocks.id 
+       WHERE users.id_number = ? 
+    
+       UNION 
+    
+       SELECT 
+          admins.id_number, 
+          admins.first_name, 
+          admins.last_name, 
+          admins.email, 
+          admins.password_hash, 
+          NULL AS block_id, 
+          admins.department_id, 
+          admins.role_id 
+       FROM admins
+       WHERE admins.id_number = ?`,
       [id_number, id_number]
     );
 
-    if (!accountData.length || !accountData[0].password_hash) {
+    if (!accountData.length) {
       return res
         .status(404)
         .json({ success: false, message: "Account not found." });
@@ -153,7 +163,7 @@ exports.login = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: account.id_number, id_number, role: account.role },
+      { id: account.id_number, role: account.role_id },
       config.JWT_SECRET_KEY,
       { expiresIn: "7d" }
     );
@@ -163,23 +173,23 @@ exports.login = async (req, res) => {
       message: "Login successful.",
       token,
       user: {
-        id_number,
+        id_number: account.id_number,
         first_name: account.first_name,
         last_name: account.last_name,
         email: account.email,
-        role: account.role,
+        block: account.block_id,
         department_id: account.department_id,
-        block_id: account.block_id || null,
-        year_level_id: account.year_level_id || null,
+        role_id: account.role_id,
       },
     });
   } catch (error) {
-    console.error("Error in login:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Internal server error",
+        error: error.message,
+      });
   } finally {
     if (connection) connection.release();
   }
@@ -197,19 +207,20 @@ exports.resetPassword = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    await connection.beginTransaction();
 
     const [user] = await connection.query(
-      "SELECT id_number FROM users WHERE LOWER(email) = LOWER(?)",
+      "SELECT id_number FROM users WHERE email = ?",
       [email]
     );
     const [admin] = await connection.query(
-      "SELECT id_number FROM admins WHERE LOWER(email) = LOWER(?)",
+      "SELECT id_number FROM admins WHERE email = ?",
       [email]
     );
 
     if (!user.length && !admin.length) {
-      throw { status: 404, message: "User not found." };
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
     }
 
     const resetCode = Math.floor(10000 + Math.random() * 90000);
@@ -219,11 +230,9 @@ exports.resetPassword = async (req, res) => {
     ]);
 
     await connection.query(
-      "INSERT INTO password_reset_codes (email, reset_code, created_at, used) VALUES (?, ?, NOW(), false)",
+      "INSERT INTO password_reset_codes (email, reset_code, created_at, used) VALUES (?, ?, NOW(), 0)",
       [email, resetCode]
     );
-
-    await connection.commit();
 
     res
       .status(200)
@@ -231,13 +240,7 @@ exports.resetPassword = async (req, res) => {
 
     sendResetEmail(email, resetCode);
   } catch (error) {
-    if (connection) await connection.rollback();
-    console.error("Error in resetPassword:", error);
-
-    res.status(error.status || 500).json({
-      success: false,
-      message: error.message || "Internal server error",
-    });
+    res.status(500).json({ success: false, message: "Internal server error" });
   } finally {
     if (connection) connection.release();
   }
@@ -261,8 +264,6 @@ const sendResetEmail = async (email, resetCode) => {
       text: `Your password reset code is: ${resetCode}`,
       html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
-
-    console.log(`Password reset email sent to ${email}`);
   } catch (error) {
     console.error("Error sending reset email:", error);
   }
@@ -272,10 +273,12 @@ exports.confirmPassword = async (req, res) => {
   const { email, reset_code } = req.body;
 
   if (!email || !reset_code || !/^\d{5}$/.test(reset_code)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid input. Email and a 5-digit reset code are required.",
-    });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "Invalid input. Email and a 5-digit reset code are required.",
+      });
   }
 
   let connection;
@@ -283,11 +286,11 @@ exports.confirmPassword = async (req, res) => {
     connection = await pool.getConnection();
 
     const [user] = await connection.query(
-      "SELECT id_number FROM users WHERE LOWER(email) = LOWER(?)",
+      "SELECT id_number FROM users WHERE email = ?",
       [email]
     );
     const [admin] = await connection.query(
-      "SELECT id_number FROM admins WHERE LOWER(email) = LOWER(?)",
+      "SELECT id_number FROM admins WHERE email = ?",
       [email]
     );
 
@@ -298,33 +301,28 @@ exports.confirmPassword = async (req, res) => {
     }
 
     const [codeRecord] = await connection.query(
-      "SELECT id FROM password_reset_codes WHERE LOWER(email) = LOWER(?) AND reset_code = ? AND created_at >= NOW() - INTERVAL 15 MINUTE AND used = false",
-      [email, parseInt(reset_code, 10)]
+      "SELECT id FROM password_reset_codes WHERE email = ? AND reset_code = ? AND created_at >= NOW() - INTERVAL 5 MINUTE AND used = 0",
+      [email, reset_code]
     );
 
     if (!codeRecord.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired reset code.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid or expired reset code." });
     }
 
     await connection.query(
-      "UPDATE password_reset_codes SET used = true WHERE id = ?",
+      "UPDATE password_reset_codes SET used = 1 WHERE id = ?",
       [codeRecord[0].id]
     );
 
-    return res.status(200).json({
-      success: true,
-      message: "Reset code verified successfully.",
-    });
+    return res
+      .status(200)
+      .json({ success: true, message: "Reset code verified successfully." });
   } catch (error) {
-    console.error("Error in confirmPassword:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
   } finally {
     if (connection) connection.release();
   }
