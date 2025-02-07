@@ -194,7 +194,7 @@ exports.login = async (req, res) => {
         first_name: account.first_name,
         last_name: account.last_name,
         email: account.email,
-        block: account.block_id,
+        block_id: account.block_id,
         department_id: account.department_id,
         role_id: account.role_id,
       },
