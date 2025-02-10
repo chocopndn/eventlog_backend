@@ -141,10 +141,13 @@ exports.login = async (req, res) => {
           users.email, 
           users.password_hash, 
           users.block_id, 
+          blocks.name AS block_name, 
           blocks.department_id, 
+          departments.name AS department_name,
           users.role_id 
        FROM users 
        LEFT JOIN blocks ON users.block_id = blocks.id 
+       LEFT JOIN departments ON blocks.department_id = departments.id
        WHERE users.id_number = ? 
        UNION 
        SELECT 
@@ -154,9 +157,12 @@ exports.login = async (req, res) => {
           admins.email, 
           admins.password_hash, 
           NULL AS block_id, 
+          NULL AS block_name, 
           admins.department_id, 
+          departments.name AS department_name,
           admins.role_id 
        FROM admins
+       LEFT JOIN departments ON admins.department_id = departments.id
        WHERE admins.id_number = ?`,
       [id_number, id_number]
     );
@@ -195,7 +201,9 @@ exports.login = async (req, res) => {
         last_name: account.last_name,
         email: account.email,
         block_id: account.block_id,
+        block_name: account.block_name,
         department_id: account.department_id,
+        department_name: account.department_name,
         role_id: account.role_id,
       },
     });

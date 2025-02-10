@@ -11,7 +11,7 @@ const handleError = (res, error, defaultMessage = "Internal server error") => {
 exports.getDepartment = async (req, res) => {
   try {
     const [departments] = await pool.query(
-      "SELECT id AS department_id, name AS department_name FROM departments ORDER BY id"
+      "SELECT id, name FROM departments ORDER BY id"
     );
 
     if (!departments.length) {
