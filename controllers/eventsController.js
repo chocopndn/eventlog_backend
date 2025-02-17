@@ -1,34 +1,17 @@
 const { pool } = require("../config/db");
 const moment = require("moment");
 
-const handleError = (res, error, defaultMessage = "Internal server error") => {
-  console.error(error);
-  return res.status(error.status || 500).json({
-    success: false,
-    message: error.message || defaultMessage,
-  });
-};
-
 exports.userUpcomingEvents = async (req, res) => {
-  const { block_id } = req.query;
-
-  if (!block_id) {
-    return res.status(400).json({
-      success: false,
-      message: "Block ID is required",
-    });
-  }
-
+  const { block_id } = req.body;
   const currentDate = moment().format("YYYY-MM-DD");
 
   try {
-    const query = `
+    let query = `
       SELECT 
         events.id AS event_id,
-        events.event_name_id, 
         event_names.name AS event_name,
-        events.venue, 
-        event_dates.event_date AS date_of_event,
+        events.venue,
+        event_dates.event_date,
         event_dates.am_in,
         event_dates.am_out,
         event_dates.pm_in,
@@ -38,75 +21,63 @@ exports.userUpcomingEvents = async (req, res) => {
       JOIN event_names ON events.event_name_id = event_names.id
       JOIN event_dates ON events.id = event_dates.event_id
       LEFT JOIN event_blocks ON events.id = event_blocks.event_id
-      WHERE event_dates.event_date >= ?  
-      AND (
-        event_blocks.block_id = ? 
-        OR event_blocks.block_id IS NULL 
-      )
-      AND event_blocks.event_id IS NOT NULL 
+      WHERE event_dates.event_date >= ?
     `;
 
-    const [allEvents] = await pool.query(query, [currentDate, block_id]);
+    query += ` AND event_blocks.event_id IS NOT NULL`;
 
-    if (!allEvents.length) {
+    if (block_id !== null && block_id !== undefined) {
+      query += ` AND (event_blocks.block_id = ? OR event_blocks.block_id IS NULL)`;
+    }
+
+    query += ` ORDER BY event_dates.event_date;`;
+
+    const queryParams =
+      block_id !== null && block_id !== undefined
+        ? [currentDate, block_id]
+        : [currentDate];
+    const [events] = await pool.query(query, queryParams);
+
+    if (!events.length) {
       return res.json({
         success: true,
         events: [],
       });
     }
 
-    const groupedEvents = {};
+    const formattedEvents = events.reduce((acc, eventRecord) => {
+      const event = acc.find((ev) => ev.event_id === eventRecord.event_id);
 
-    allEvents.forEach((event) => {
-      const eventKey = event.event_name_id;
-
-      if (!groupedEvents[eventKey]) {
-        groupedEvents[eventKey] = {
-          event_id: event.event_id,
-          event_name: event.event_name,
-          venue: event.venue,
-          scan_personnel: event.scan_personnel,
-          dates: [],
-          am_in: null,
-          am_out: null,
-          pm_in: null,
-          pm_out: null,
-        };
+      if (!event) {
+        acc.push({
+          event_id: eventRecord.event_id,
+          event_name: eventRecord.event_name,
+          venue: eventRecord.venue,
+          scan_personnel: eventRecord.scan_personnel,
+          event_dates: [moment(eventRecord.event_date).format("YYYY-MM-DD")],
+          am_in: eventRecord.am_in,
+          am_out: eventRecord.am_out,
+          pm_in: eventRecord.pm_in,
+          pm_out: eventRecord.pm_out,
+        });
+      } else {
+        event.event_dates.push(
+          moment(eventRecord.event_date).format("YYYY-MM-DD")
+        );
       }
 
-      const formattedEventDate = moment(event.date_of_event).format(
-        "YYYY-MM-DD"
-      );
-
-      groupedEvents[eventKey].dates.push(formattedEventDate);
-
-      groupedEvents[eventKey].am_in = event.am_in
-        ? moment(event.am_in, "HH:mm:ss").format("HH:mm:ss")
-        : null;
-      groupedEvents[eventKey].am_out = event.am_out
-        ? moment(event.am_out, "HH:mm:ss").format("HH:mm:ss")
-        : null;
-      groupedEvents[eventKey].pm_in = event.pm_in
-        ? moment(event.pm_in, "HH:mm:ss").format("HH:mm:ss")
-        : null;
-      groupedEvents[eventKey].pm_out = event.pm_out
-        ? moment(event.pm_out, "HH:mm:ss").format("HH:mm:ss")
-        : null;
-    });
-
-    let formattedEvents = Object.values(groupedEvents);
-
-    formattedEvents.forEach((event) => {
-      event.dates.sort((a, b) => new Date(a) - new Date(b));
-    });
-
-    formattedEvents.sort((a, b) => new Date(a.dates[0]) - new Date(b.dates[0]));
+      return acc;
+    }, []);
 
     return res.json({
       success: true,
       events: formattedEvents,
     });
   } catch (error) {
-    return handleError(res, error);
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
 };
