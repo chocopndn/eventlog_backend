@@ -65,15 +65,16 @@ exports.signup = async (req, res) => {
 
     const [userRecords] = await connection.query(
       `SELECT users.id_number, users.first_name, users.middle_name, users.last_name, users.suffix, 
-              users.password_hash, blocks.department_id
+              users.password_hash, courses.department_id 
        FROM users
        JOIN blocks ON users.block_id = blocks.id
+       JOIN courses ON blocks.course_id = courses.id
        WHERE users.id_number = ? 
        AND users.first_name = ? 
        AND (users.middle_name IS NULL OR users.middle_name = ?)
        AND users.last_name = ? 
        AND (users.suffix IS NULL OR users.suffix = ?)
-       AND blocks.department_id = ?`,
+       AND courses.department_id = ?`,
       [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
 
@@ -151,12 +152,15 @@ exports.login = async (req, res) => {
           users.password_hash, 
           users.block_id, 
           blocks.name AS block_name, 
-          blocks.department_id, 
+          blocks.course_id, 
+          courses.name AS course_name, 
+          courses.department_id, 
           departments.name AS department_name,
           users.role_id 
        FROM users 
        LEFT JOIN blocks ON users.block_id = blocks.id 
-       LEFT JOIN departments ON blocks.department_id = departments.id
+       LEFT JOIN courses ON blocks.course_id = courses.id
+       LEFT JOIN departments ON courses.department_id = departments.id  -- FIXED: Join department via courses
        WHERE users.id_number = ?`,
       [id_number]
     );
@@ -191,9 +195,10 @@ exports.login = async (req, res) => {
       account.password_hash
     );
     if (!isPasswordValid) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid password." });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password.",
+      });
     }
 
     const token = jwt.sign(
@@ -212,8 +217,10 @@ exports.login = async (req, res) => {
         email: account.email,
         block_id: account.block_id || null,
         block_name: account.block_name || null,
-        department_id: account.department_id,
-        department_name: account.department_name,
+        course_id: account.course_id || null,
+        course_name: account.course_name || null,
+        department_id: account.department_id || null,
+        department_name: account.department_name || null,
         role_id: account.role_id,
       },
     });
