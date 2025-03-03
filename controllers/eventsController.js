@@ -1,5 +1,7 @@
 const { pool } = require("../config/db");
 const moment = require("moment");
+const config = require("../config/config");
+const CryptoJS = require("crypto-js");
 
 exports.userUpcomingEvents = async (req, res) => {
   const { block_id } = req.body;
@@ -39,10 +41,7 @@ exports.userUpcomingEvents = async (req, res) => {
     const [events] = await pool.query(query, queryParams);
 
     if (!events.length) {
-      return res.json({
-        success: true,
-        events: [],
-      });
+      return res.json({ success: true, events: [] });
     }
 
     const formattedEvents = events.reduce((acc, eventRecord) => {
@@ -69,15 +68,201 @@ exports.userUpcomingEvents = async (req, res) => {
       return acc;
     }, []);
 
-    return res.json({
-      success: true,
-      events: formattedEvents,
-    });
+    return res.json({ success: true, events: formattedEvents });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({
-      success: false,
-      message: "Something went wrong",
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Something went wrong" });
+  }
+};
+
+exports.recordAttendance = async (req, res) => {
+  try {
+    const encryptedAttendanceData = req.body.encryptedData;
+
+    if (!encryptedAttendanceData) {
+      return res.status(400).json({ message: "No encrypted data provided" });
+    }
+
+    const decryptionPassword = config.QR_PASS;
+
+    try {
+      const decryptedBytes = CryptoJS.AES.decrypt(
+        encryptedAttendanceData,
+        decryptionPassword
+      );
+      const decryptedAttendanceString = decryptedBytes.toString(
+        CryptoJS.enc.Utf8
+      );
+
+      if (!decryptedAttendanceString) {
+        return res
+          .status(400)
+          .json({ message: "Decryption failed or invalid data." });
+      }
+
+      const attendanceDataParts = decryptedAttendanceString.split("-");
+
+      if (attendanceDataParts.length !== 3) {
+        return res
+          .status(400)
+          .json({
+            message: "Invalid data format. Expected fullName-userId-eventId.",
+          });
+      }
+
+      const [fullName, userId, eventId] = attendanceDataParts;
+      const numericUserId = parseInt(userId);
+      const numericEventId = parseInt(eventId);
+
+      if (isNaN(numericUserId) || isNaN(numericEventId)) {
+        return res.status(400).json({ message: "Invalid user or event ID." });
+      }
+
+      const connection = await pool.getConnection();
+
+      try {
+        const [eventDates] = await connection.query(
+          "SELECT id, event_date, am_in, am_out, pm_in, pm_out FROM event_dates WHERE event_id = ?",
+          [numericEventId]
+        );
+
+        if (eventDates.length === 0) {
+          return res.status(404).json({ message: "Event dates not found." });
+        }
+
+        const currentDate = new Date();
+        const currentDateString = currentDate.toLocaleDateString("en-CA", {
+          timeZone: "Asia/Manila",
+        });
+
+        const eventDate = eventDates.find(
+          (date) =>
+            date.event_date.toLocaleDateString("en-CA", {
+              timeZone: "Asia/Manila",
+            }) === currentDateString
+        );
+
+        if (!eventDate) {
+          return res
+            .status(404)
+            .json({ message: "Event date not found for today." });
+        }
+
+        const currentTime = new Date();
+        const currentTimeString = currentTime.toLocaleTimeString("en-CA", {
+          timeZone: "Asia/Manila",
+          hour12: false,
+        });
+
+        const [existingAttendance] = await connection.query(
+          "SELECT * FROM attendance WHERE event_date_id = ? AND student_id_number = ?",
+          [eventDate.id, numericUserId]
+        );
+
+        const existingRecord = existingAttendance[0];
+
+        if (
+          existingAttendance.length > 0 &&
+          existingRecord &&
+          existingRecord.am_in &&
+          existingRecord.am_out &&
+          existingRecord.pm_in &&
+          existingRecord.pm_out
+        ) {
+          return res
+            .status(400)
+            .json({ message: "All attendance for today is already recorded." });
+        }
+
+        const attendanceRecord = {
+          am_in: eventDate.am_in,
+          am_out: eventDate.am_out,
+          pm_in: eventDate.pm_in,
+          pm_out: eventDate.pm_out,
+        };
+
+        let attendanceType = null;
+
+        const timeToMinutes = (timeString) => {
+          const [hours, minutes] = timeString.split(":").map(Number);
+          return hours * 60 + minutes;
+        };
+
+        const timeWindowCheck = (targetTime) => {
+          if (!targetTime) return false;
+          const currentTimeMinutes = timeToMinutes(currentTimeString);
+          const targetTimeMinutes = timeToMinutes(targetTime);
+          return (
+            currentTimeMinutes >= targetTimeMinutes - 30 &&
+            currentTimeMinutes <= targetTimeMinutes + 30
+          );
+        };
+
+        if (
+          attendanceRecord.am_in &&
+          timeWindowCheck(attendanceRecord.am_in) &&
+          (!existingRecord || !existingRecord.am_in)
+        ) {
+          attendanceType = "am_in";
+        } else if (
+          attendanceRecord.am_out &&
+          timeWindowCheck(attendanceRecord.am_out) &&
+          existingRecord?.am_in &&
+          !existingRecord.am_out
+        ) {
+          attendanceType = "am_out";
+        } else if (
+          attendanceRecord.pm_in &&
+          timeWindowCheck(attendanceRecord.pm_in) &&
+          existingRecord?.am_out &&
+          !existingRecord.pm_in
+        ) {
+          attendanceType = "pm_in";
+        } else if (
+          attendanceRecord.pm_out &&
+          timeWindowCheck(attendanceRecord.pm_out) &&
+          existingRecord?.pm_in &&
+          !existingRecord.pm_out
+        ) {
+          attendanceType = "pm_out";
+        } else {
+          return res
+            .status(400)
+            .json({
+              message:
+                "Attendance time window not met or invalid attendance state.",
+            });
+        }
+
+        await connection.query(
+          `INSERT INTO attendance (event_date_id, student_id_number, ${attendanceType}) VALUES (?, ?, ?)`,
+          [eventDate.id, numericUserId, currentTimeString]
+        );
+
+        return res.status(200).json({
+          message: `${attendanceType.toUpperCase()} attendance recorded`,
+          fullName,
+          userId: numericUserId,
+          eventId: numericEventId,
+          time: currentTimeString,
+        });
+      } catch (dbError) {
+        return res
+          .status(500)
+          .json({ message: "Database error while recording attendance." });
+      } finally {
+        connection.release();
+      }
+    } catch {
+      return res
+        .status(400)
+        .json({ message: "Decryption failed or invalid data." });
+    }
+  } catch {
+    return res
+      .status(500)
+      .json({ message: "An error occurred while processing the data" });
   }
 };
