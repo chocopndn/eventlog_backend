@@ -124,7 +124,7 @@ exports.recordAttendance = async (req, res) => {
 
       try {
         const [eventDates] = await connection.query(
-          "SELECT id, event_date, am_in, am_out, pm_in, pm_out FROM event_dates WHERE event_id = ?",
+          "SELECT id, event_date, am_in, am_out, pm_in, pm_out, duration FROM event_dates WHERE event_id = ?",
           [numericEventId]
         );
 
@@ -156,89 +156,47 @@ exports.recordAttendance = async (req, res) => {
           hour12: false,
         });
 
-        const [existingAttendance] = await connection.query(
-          "SELECT * FROM attendance WHERE event_date_id = ? AND student_id_number = ?",
-          [eventDate.id, numericUserId]
-        );
-
-        const existingRecord = existingAttendance[0];
-
-        if (
-          existingAttendance.length > 0 &&
-          existingRecord &&
-          existingRecord.am_in &&
-          existingRecord.am_out &&
-          existingRecord.pm_in &&
-          existingRecord.pm_out
-        ) {
-          return res
-            .status(400)
-            .json({ message: "All attendance for today is already recorded." });
-        }
-
-        const attendanceRecord = {
-          am_in: eventDate.am_in,
-          am_out: eventDate.am_out,
-          pm_in: eventDate.pm_in,
-          pm_out: eventDate.pm_out,
-        };
-
-        let attendanceType = null;
-
         const timeToMinutes = (timeString) => {
+          if (!timeString) return null;
           const [hours, minutes] = timeString.split(":").map(Number);
           return hours * 60 + minutes;
         };
 
-        const timeWindowCheck = (targetTime) => {
-          if (!targetTime) return false;
-          const currentTimeMinutes = timeToMinutes(currentTimeString);
-          const targetTimeMinutes = timeToMinutes(targetTime);
-          return (
-            currentTimeMinutes >= targetTimeMinutes - 30 &&
-            currentTimeMinutes <= targetTimeMinutes + 30
-          );
-        };
+        const currentTimeMinutes = timeToMinutes(currentTimeString);
+        const amInMinutes = timeToMinutes(eventDate.am_in);
+        const amOutMinutes = timeToMinutes(eventDate.am_out);
+        const pmInMinutes = timeToMinutes(eventDate.pm_in);
+        const pmOutMinutes = timeToMinutes(eventDate.pm_out);
+        const durationMinutes = eventDate.duration;
+
+        let attendanceType = null;
 
         if (
-          attendanceRecord.am_in &&
-          timeWindowCheck(attendanceRecord.am_in) &&
-          (!existingRecord || !existingRecord.am_in)
+          currentTimeMinutes >= amInMinutes - 15 &&
+          currentTimeMinutes <= amInMinutes + durationMinutes
         ) {
           attendanceType = "am_in";
-        } else if (
-          attendanceRecord.am_out &&
-          timeWindowCheck(attendanceRecord.am_out) &&
-          existingRecord?.am_in &&
-          !existingRecord.am_out
-        ) {
+        } else if (currentTimeMinutes <= amOutMinutes + durationMinutes) {
           attendanceType = "am_out";
         } else if (
-          attendanceRecord.pm_in &&
-          timeWindowCheck(attendanceRecord.pm_in) &&
-          existingRecord?.am_out &&
-          !existingRecord.pm_in
+          currentTimeMinutes >= pmInMinutes - 15 &&
+          currentTimeMinutes <= pmInMinutes + durationMinutes
         ) {
           attendanceType = "pm_in";
         } else if (
-          attendanceRecord.pm_out &&
-          timeWindowCheck(attendanceRecord.pm_out) &&
-          existingRecord?.pm_in &&
-          !existingRecord.pm_out
+          currentTimeMinutes >= pmOutMinutes - 15 &&
+          currentTimeMinutes <= pmOutMinutes + durationMinutes
         ) {
           attendanceType = "pm_out";
         } else {
           return res
             .status(400)
-            .json({
-              message:
-                "Attendance time window not met or invalid attendance state.",
-            });
+            .json({ message: "Attendance time window not met." });
         }
 
         await connection.query(
-          `INSERT INTO attendance (event_date_id, student_id_number, ${attendanceType}) VALUES (?, ?, ?)`,
-          [eventDate.id, numericUserId, currentTimeString]
+          `INSERT INTO attendance (event_date_id, student_id_number, ${attendanceType}) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ${attendanceType} = ?`,
+          [eventDate.id, numericUserId, currentTimeString, currentTimeString]
         );
 
         return res.status(200).json({
@@ -249,6 +207,7 @@ exports.recordAttendance = async (req, res) => {
           time: currentTimeString,
         });
       } catch (dbError) {
+        console.error("Database error:", dbError);
         return res
           .status(500)
           .json({ message: "Database error while recording attendance." });
@@ -260,7 +219,8 @@ exports.recordAttendance = async (req, res) => {
         .status(400)
         .json({ message: "Decryption failed or invalid data." });
     }
-  } catch {
+  } catch (error) {
+    console.error("An error occurred:", error);
     return res
       .status(500)
       .json({ message: "An error occurred while processing the data" });
