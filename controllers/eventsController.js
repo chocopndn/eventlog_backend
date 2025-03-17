@@ -105,11 +105,9 @@ exports.recordAttendance = async (req, res) => {
       const attendanceDataParts = decryptedAttendanceString.split("-");
 
       if (attendanceDataParts.length !== 3) {
-        return res
-          .status(400)
-          .json({
-            message: "Invalid data format. Expected fullName-userId-eventId.",
-          });
+        return res.status(400).json({
+          message: "Invalid data format. Expected fullName-userId-eventId.",
+        });
       }
 
       const [fullName, userId, eventId] = attendanceDataParts;
@@ -224,5 +222,89 @@ exports.recordAttendance = async (req, res) => {
     return res
       .status(500)
       .json({ message: "An error occurred while processing the data" });
+  }
+};
+
+exports.addEvent = async (req, res) => {
+  const {
+    event_name_id,
+    venue,
+    description,
+    department_id,
+    block_ids,
+    date,
+    am_in,
+    am_out,
+    pm_in,
+    pm_out,
+    duration,
+    admin_id_number,
+  } = req.body;
+
+  if (
+    !event_name_id ||
+    !venue ||
+    !description ||
+    !department_id ||
+    !block_ids ||
+    !block_ids.length ||
+    !date ||
+    !duration ||
+    !admin_id_number
+  ) {
+    return res.status(400).json({ message: "Missing required fields." });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [adminResult] = await connection.query(
+      `SELECT first_name, middle_name, last_name, suffix 
+       FROM admins 
+       WHERE id_number = ?`,
+      [admin_id_number]
+    );
+
+    if (adminResult.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Admin not found." });
+    }
+
+    const { first_name, middle_name, last_name, suffix } = adminResult[0];
+
+    const scan_personnel = [first_name, middle_name, last_name, suffix]
+      .filter(Boolean)
+      .join(" ");
+
+    const [eventResult] = await connection.query(
+      `INSERT INTO events (event_name_id, venue, description, created_by, scan_personnel, status) 
+       VALUES (?, ?, ?, ?, ?, 'pending')`,
+      [event_name_id, venue, description, admin_id_number, scan_personnel]
+    );
+
+    const event_id = eventResult.insertId;
+
+    await connection.query(
+      `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [event_id, date, am_in, am_out, pm_in, pm_out, duration]
+    );
+
+    const eventBlockValues = block_ids.map((block_id) => [event_id, block_id]);
+    await connection.query(
+      `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
+      [eventBlockValues]
+    );
+
+    await connection.commit();
+    return res.status(201).json({ message: "Event added successfully." });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Database error:", error);
+    return res.status(500).json({ message: "Failed to add event." });
+  } finally {
+    connection.release();
   }
 };
