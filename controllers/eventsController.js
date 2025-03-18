@@ -238,6 +238,7 @@ exports.addEvent = async (req, res) => {
     pm_in,
     pm_out,
     duration,
+    scan_personnel,
     admin_id_number,
   } = req.body;
 
@@ -250,6 +251,7 @@ exports.addEvent = async (req, res) => {
     !block_ids.length ||
     !date ||
     !duration ||
+    !scan_personnel ||
     !admin_id_number
   ) {
     return res.status(400).json({ message: "Missing required fields." });
@@ -259,24 +261,6 @@ exports.addEvent = async (req, res) => {
 
   try {
     await connection.beginTransaction();
-
-    const [adminResult] = await connection.query(
-      `SELECT first_name, middle_name, last_name, suffix 
-       FROM admins 
-       WHERE id_number = ?`,
-      [admin_id_number]
-    );
-
-    if (adminResult.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({ message: "Admin not found." });
-    }
-
-    const { first_name, middle_name, last_name, suffix } = adminResult[0];
-
-    const scan_personnel = [first_name, middle_name, last_name, suffix]
-      .filter(Boolean)
-      .join(" ");
 
     const [eventResult] = await connection.query(
       `INSERT INTO events (event_name_id, venue, description, created_by, scan_personnel, status) 
@@ -302,7 +286,6 @@ exports.addEvent = async (req, res) => {
     return res.status(201).json({ message: "Event added successfully." });
   } catch (error) {
     await connection.rollback();
-    console.error("Database error:", error);
     return res.status(500).json({ message: "Failed to add event." });
   } finally {
     connection.release();
