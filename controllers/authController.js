@@ -301,8 +301,6 @@ const sendResetEmail = async (email, resetCode) => {
       text: `Your password reset code is: ${resetCode}`,
       html: `<p>Your password reset code is: <b>${resetCode}</b></p>`,
     });
-
-    console.log(`Reset email sent to ${email}`);
   } catch (error) {
     console.error("Error sending reset email:", error);
   }
