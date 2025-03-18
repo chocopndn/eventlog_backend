@@ -305,6 +305,7 @@ exports.editEvent = async (req, res) => {
     am_out,
     pm_in,
     pm_out,
+    scan_personnel,
     duration,
   } = req.body;
 
@@ -316,7 +317,8 @@ exports.editEvent = async (req, res) => {
     !department_id ||
     !Array.isArray(block_ids) ||
     !date ||
-    !duration
+    !duration ||
+    !scan_personnel
   ) {
     return res.status(400).json({ message: "Missing required fields." });
   }
@@ -327,7 +329,7 @@ exports.editEvent = async (req, res) => {
     await connection.beginTransaction();
 
     const [existingEvent] = await connection.query(
-      `SELECT event_name_id, venue, description FROM events WHERE id = ?`,
+      `SELECT event_name_id, venue, description, scan_personnel FROM events WHERE id = ?`,
       [event_id]
     );
 
@@ -339,11 +341,12 @@ exports.editEvent = async (req, res) => {
     if (
       existingEvent[0].event_name_id !== event_name_id ||
       existingEvent[0].venue !== venue ||
-      existingEvent[0].description !== description
+      existingEvent[0].description !== description ||
+      existingEvent[0].scan_personnel !== scan_personnel
     ) {
       await connection.query(
-        `UPDATE events SET event_name_id = ?, venue = ?, description = ? WHERE id = ?`,
-        [event_name_id, venue, description, event_id]
+        `UPDATE events SET event_name_id = ?, venue = ?, description = ?, scan_personnel = ? WHERE id = ?`,
+        [event_name_id, venue, description, scan_personnel, event_id]
       );
     }
 
