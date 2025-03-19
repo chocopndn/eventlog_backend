@@ -2,10 +2,10 @@ const { pool } = require("../config/db");
 
 exports.getAllBlocks = async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT * FROM blocks");
+    const blocks = await pool.query("SELECT * FROM v_blocks");
     res.status(200).json({
       success: true,
-      data: rows,
+      data: blocks,
       message: "Blocks fetched successfully.",
     });
   } catch (error) {
