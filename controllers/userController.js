@@ -81,3 +81,35 @@ exports.getAllUsers = async (req, res) => {
     return handleError(res, error);
   }
 };
+
+exports.getAllUsersByID = async (req, res) => {
+  const { id_number } = req.body;
+  let connection;
+
+  try {
+    connection = await pool.getConnection();
+
+    const [user] = await connection.query(
+      "SELECT * FROM v_users WHERE id_number = ?",
+      [id_number]
+    );
+
+    if (user.length == 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const { password_hash, ...userWithoutPassword } = user[0];
+
+    return res.status(200).json({
+      success: true,
+      user: userWithoutPassword,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  } finally {
+    if (connection) connection.release();
+  }
+};
