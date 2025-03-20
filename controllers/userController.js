@@ -113,3 +113,36 @@ exports.getAllUsersByID = async (req, res) => {
     if (connection) connection.release();
   }
 };
+
+exports.getUsersByDepartment = async (req, res) => {
+  const department_id = req.params.id;
+  let connection;
+
+  try {
+    connection = await pool.getConnection();
+    const [users] = await connection.query(
+      "SELECT * FROM v_users WHERE department_id = ?",
+      [department_id]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No user found!",
+      });
+    }
+
+    const usersWithoutPassword = users.map(
+      ({ password_hash, ...user }) => user
+    );
+
+    return res.status(200).json({
+      success: true,
+      users: usersWithoutPassword,
+    });
+  } catch (error) {
+    return handleError(res, error);
+  } finally {
+    if (connection) connection.release();
+  }
+};
