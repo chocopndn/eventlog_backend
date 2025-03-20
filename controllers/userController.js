@@ -8,27 +8,6 @@ const handleError = (res, error, defaultMessage = "Internal server error") => {
   });
 };
 
-const getUserQuery = () => {
-  return `
-    SELECT 
-      users.id_number, 
-      users.first_name, 
-      users.middle_name,
-      users.last_name, 
-      users.suffix,
-      users.email, 
-      roles.name AS role_name,
-      year_levels.name AS year_level_name,
-      blocks.name AS block_name,
-      departments.name AS department_name
-    FROM users
-    LEFT JOIN roles ON users.role_id = roles.id
-    LEFT JOIN blocks ON users.block_id = blocks.id
-    LEFT JOIN departments ON blocks.department_id = departments.id
-    LEFT JOIN year_levels ON blocks.year_level_id = year_levels.id
-  `;
-};
-
 exports.changePassword = async (req, res) => {
   const { email, newPassword } = req.body;
 
@@ -81,5 +60,24 @@ exports.changePassword = async (req, res) => {
     return handleError(res, error);
   } finally {
     if (connection) connection.release();
+  }
+};
+
+exports.getAllUsers = async (req, res) => {
+  try {
+    const [users] = await pool.query("SELECT * FROM v_users");
+
+    if (!users.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No users found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: users,
+    });
+  } catch (error) {
+    return handleError(res, error);
   }
 };
