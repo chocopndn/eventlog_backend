@@ -5,39 +5,18 @@ const CryptoJS = require("crypto-js");
 
 exports.userUpcomingEvents = async (req, res) => {
   const { block_id } = req.body;
-  const currentDate = moment().format("YYYY-MM-DD");
 
   try {
-    let query = `
-      SELECT 
-        events.id AS event_id,
-        event_names.name AS event_name,
-        events.venue,
-        event_dates.event_date,
-        event_dates.am_in,
-        event_dates.am_out,
-        event_dates.pm_in,
-        event_dates.pm_out,
-        events.scan_personnel
-      FROM events
-      JOIN event_names ON events.event_name_id = event_names.id
-      JOIN event_dates ON events.id = event_dates.event_id
-      LEFT JOIN event_blocks ON events.id = event_blocks.event_id
-      WHERE event_dates.event_date >= ?
-    `;
-
-    query += ` AND event_blocks.event_id IS NOT NULL`;
+    let query = `SELECT * FROM v_user_upcoming_events`;
+    let queryParams = [];
 
     if (block_id !== null && block_id !== undefined) {
-      query += ` AND (event_blocks.block_id = ? OR event_blocks.block_id IS NULL)`;
+      query += ` WHERE block_id = ? OR block_id IS NULL`;
+      queryParams.push(block_id);
     }
 
-    query += ` ORDER BY event_dates.event_date;`;
+    query += ` ORDER BY event_date;`;
 
-    const queryParams =
-      block_id !== null && block_id !== undefined
-        ? [currentDate, block_id]
-        : [currentDate];
     const [events] = await pool.query(query, queryParams);
 
     if (!events.length) {
