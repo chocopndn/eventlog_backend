@@ -83,7 +83,7 @@ exports.getAllUsers = async (req, res) => {
 };
 
 exports.getAllUsersByID = async (req, res) => {
-  const { id_number } = req.body;
+  const id_number = req.params.id;
   let connection;
 
   try {
