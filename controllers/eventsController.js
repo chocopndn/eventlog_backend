@@ -229,6 +229,7 @@ exports.addEvent = async (req, res) => {
     !block_ids ||
     !block_ids.length ||
     !date ||
+    !date.length ||
     !duration ||
     !scan_personnel ||
     !admin_id_number
@@ -241,16 +242,20 @@ exports.addEvent = async (req, res) => {
   try {
     await databaseConnection.beginTransaction();
 
-    const [existingEventRecords] = await databaseConnection.query(
-      `SELECT event_id FROM v_existing_events 
-       WHERE event_name_id = ? AND venue = ? AND event_date = ? 
-       LIMIT 1`,
-      [event_name_id, venue, date]
-    );
+    for (let eventDate of date) {
+      const [existingEventRecords] = await databaseConnection.query(
+        `SELECT event_id FROM v_existing_events 
+         WHERE event_name_id = ? AND venue = ? AND event_date = ? 
+         LIMIT 1`,
+        [event_name_id, venue, eventDate]
+      );
 
-    if (existingEventRecords.length > 0) {
-      await databaseConnection.rollback();
-      return res.status(400).json({ message: "Event already exists." });
+      if (existingEventRecords.length > 0) {
+        await databaseConnection.rollback();
+        return res
+          .status(400)
+          .json({ message: "Event already exists for one or more dates." });
+      }
     }
 
     const [insertedEventRecord] = await databaseConnection.query(
@@ -261,10 +266,20 @@ exports.addEvent = async (req, res) => {
 
     const insertedEventId = insertedEventRecord.insertId;
 
+    const eventDateValues = date.map((eventDate) => [
+      insertedEventId,
+      eventDate,
+      am_in,
+      am_out,
+      pm_in,
+      pm_out,
+      duration,
+    ]);
+
     await databaseConnection.query(
       `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [insertedEventId, date, am_in, am_out, pm_in, pm_out, duration]
+       VALUES ?`,
+      [eventDateValues]
     );
 
     const eventBlockValues = block_ids.map((block_id) => [
