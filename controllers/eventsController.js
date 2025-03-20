@@ -289,132 +289,34 @@ exports.addEvent = async (req, res) => {
 };
 
 exports.editEvent = async (req, res) => {
-  const {
-    event_id,
-    event_name_id,
-    venue,
-    description,
-    department_id,
-    block_ids,
-    date,
-    am_in,
-    am_out,
-    pm_in,
-    pm_out,
-    scan_personnel,
-    duration,
-  } = req.body;
-
-  if (
-    !event_id ||
-    !event_name_id ||
-    !venue ||
-    !description ||
-    !department_id ||
-    !Array.isArray(block_ids) ||
-    !date ||
-    !duration ||
-    !scan_personnel
-  ) {
-    return res.status(400).json({ message: "Missing required fields." });
-  }
-
   const connection = await pool.getConnection();
-
   try {
-    await connection.beginTransaction();
+    const { event_id, date, am_in, am_out, pm_in, pm_out, duration } = req.body;
 
-    const [existingEvent] = await connection.query(
-      `SELECT event_name_id, venue, description, scan_personnel FROM events WHERE id = ?`,
+    const [eventResult] = await connection.query(
+      `SELECT id FROM events WHERE id = ?`,
       [event_id]
     );
 
-    if (existingEvent.length === 0) {
-      await connection.rollback();
-      return res.status(404).json({ message: "Event not found." });
+    if (eventResult.length === 0) {
+      return res.status(404).json({ message: "Event not found" });
     }
 
-    if (
-      existingEvent[0].event_name_id !== event_name_id ||
-      existingEvent[0].venue !== venue ||
-      existingEvent[0].description !== description ||
-      existingEvent[0].scan_personnel !== scan_personnel
-    ) {
+    await connection.query(`DELETE FROM event_dates WHERE event_id = ?`, [
+      event_id,
+    ]);
+
+    for (let newDate of date) {
       await connection.query(
-        `UPDATE events SET event_name_id = ?, venue = ?, description = ?, scan_personnel = ? WHERE id = ?`,
-        [event_name_id, venue, description, scan_personnel, event_id]
+        `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [event_id, newDate, am_in, am_out, pm_in, pm_out, duration]
       );
     }
 
-    const [existingEventDate] = await connection.query(
-      `SELECT id FROM event_dates WHERE event_id = ? AND event_date = ?`,
-      [event_id, date]
-    );
-
-    if (existingEventDate.length > 0) {
-      await connection.query(
-        `UPDATE event_dates 
-         SET am_in = ?, am_out = ?, pm_in = ?, pm_out = ?, duration = ? 
-         WHERE id = ?`,
-        [am_in, am_out, pm_in, pm_out, duration, existingEventDate[0].id]
-      );
-    }
-
-    const [existingBlocks] = await connection.query(
-      `SELECT block_id FROM event_blocks WHERE event_id = ?`,
-      [event_id]
-    );
-
-    const existingBlockIds = existingBlocks.map((b) => b.block_id);
-    const hasNullBlock = existingBlockIds.includes(null);
-
-    if (block_ids.length === 0) {
-      await connection.query(`DELETE FROM event_blocks WHERE event_id = ?`, [
-        event_id,
-      ]);
-      await connection.query(
-        `INSERT INTO event_blocks (event_id, block_id) VALUES (?, NULL)`,
-        [event_id]
-      );
-    } else {
-      const blocksToAdd = block_ids.filter(
-        (id) => !existingBlockIds.includes(id)
-      );
-      const blocksToRemove = existingBlockIds.filter(
-        (id) => id !== null && !block_ids.includes(id)
-      );
-
-      if (blocksToRemove.length > 0) {
-        await connection.query(
-          `DELETE FROM event_blocks WHERE event_id = ? AND block_id IN (?)`,
-          [event_id, blocksToRemove]
-        );
-      }
-
-      if (hasNullBlock) {
-        await connection.query(
-          `DELETE FROM event_blocks WHERE event_id = ? AND block_id IS NULL`,
-          [event_id]
-        );
-      }
-
-      if (blocksToAdd.length > 0) {
-        const blockInsertValues = blocksToAdd.map((blockId) => [
-          event_id,
-          blockId,
-        ]);
-        await connection.query(
-          `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
-          [blockInsertValues]
-        );
-      }
-    }
-
-    await connection.commit();
-    res.status(200).json({ message: "Event updated successfully." });
+    res.json({ message: "Event updated successfully" });
   } catch (error) {
-    await connection.rollback();
-    res.status(500).json({ message: "Internal server error", error });
+    res.status(500).json({ message: "Internal Server Error" });
   } finally {
     connection.release();
   }
