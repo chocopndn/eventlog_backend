@@ -236,38 +236,55 @@ exports.addEvent = async (req, res) => {
     return res.status(400).json({ message: "Missing required fields." });
   }
 
-  const connection = await pool.getConnection();
+  const databaseConnection = await pool.getConnection();
 
   try {
-    await connection.beginTransaction();
+    await databaseConnection.beginTransaction();
 
-    const [eventResult] = await connection.query(
+    const [existingEventRecords] = await databaseConnection.query(
+      `SELECT event_id FROM v_existing_events 
+       WHERE event_name_id = ? AND venue = ? AND event_date = ? 
+       LIMIT 1`,
+      [event_name_id, venue, date]
+    );
+
+    if (existingEventRecords.length > 0) {
+      await databaseConnection.rollback();
+      return res.status(400).json({ message: "Event already exists." });
+    }
+
+    const [insertedEventRecord] = await databaseConnection.query(
       `INSERT INTO events (event_name_id, venue, description, created_by, scan_personnel, status) 
        VALUES (?, ?, ?, ?, ?, 'pending')`,
       [event_name_id, venue, description, admin_id_number, scan_personnel]
     );
 
-    const event_id = eventResult.insertId;
+    const insertedEventId = insertedEventRecord.insertId;
 
-    await connection.query(
+    await databaseConnection.query(
       `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [event_id, date, am_in, am_out, pm_in, pm_out, duration]
+      [insertedEventId, date, am_in, am_out, pm_in, pm_out, duration]
     );
 
-    const eventBlockValues = block_ids.map((block_id) => [event_id, block_id]);
-    await connection.query(
+    const eventBlockValues = block_ids.map((block_id) => [
+      insertedEventId,
+      block_id,
+    ]);
+    await databaseConnection.query(
       `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
       [eventBlockValues]
     );
 
-    await connection.commit();
+    await databaseConnection.commit();
     return res.status(201).json({ message: "Event added successfully." });
   } catch (error) {
-    await connection.rollback();
-    return res.status(500).json({ message: "Failed to add event." });
+    await databaseConnection.rollback();
+    return res
+      .status(500)
+      .json({ message: "Failed to add event.", error: error.message });
   } finally {
-    connection.release();
+    databaseConnection.release();
   }
 };
 
