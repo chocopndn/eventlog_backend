@@ -245,13 +245,13 @@ exports.addEvent = async (req, res) => {
 
     for (const eventDate of date) {
       const [existingEventRecords] = await databaseConnection.query(
-        `SELECT events.id, events.description, events.scan_personnel
-         FROM events
-         INNER JOIN event_dates ON events.id = event_dates.event_id AND event_dates.event_date = ? AND event_dates.am_in <=> ? AND event_dates.am_out <=> ? AND event_dates.pm_in <=> ? AND event_dates.pm_out <=> ? AND event_dates.duration = ?
-         INNER JOIN event_blocks ON events.id = event_blocks.event_id
-         WHERE events.event_name_id = ? AND events.venue = ? AND event_blocks.block_id IN (?)
-         GROUP BY events.id, events.description, events.scan_personnel
-         HAVING COUNT(DISTINCT event_blocks.block_id) = ?`,
+        `SELECT * FROM v_existing_event_details
+         WHERE event_date = ? AND am_in <=> ? AND am_out <=> ? 
+         AND pm_in <=> ? AND pm_out <=> ? AND duration = ? 
+         AND event_name_id = ? AND venue = ? 
+         AND id IN (SELECT event_id FROM event_blocks WHERE block_id IN (?))
+         GROUP BY id, description, scan_personnel
+         HAVING COUNT(DISTINCT block_id) = ?`,
         [
           eventDate,
           am_in,
@@ -281,12 +281,10 @@ exports.addEvent = async (req, res) => {
 
     if (allDataMatches && isExistingEvent) {
       await databaseConnection.rollback();
-      return res
-        .status(400)
-        .json({
-          message:
-            "Event with identical data already exists for one or more dates.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Event already exists with the same details.",
+      });
     }
 
     if (isExistingEvent && !allDataMatches) {
