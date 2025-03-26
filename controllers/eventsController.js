@@ -224,10 +224,8 @@ exports.addEvent = async (req, res) => {
     !event_name_id ||
     !venue ||
     !description ||
-    !block_ids ||
-    !block_ids.length ||
-    !date ||
-    !date.length ||
+    !block_ids?.length ||
+    !date?.length ||
     !duration ||
     !scan_personnel ||
     !admin_id_number
@@ -235,151 +233,105 @@ exports.addEvent = async (req, res) => {
     return res.status(400).json({ message: "Missing required fields." });
   }
 
-  const databaseConnection = await pool.getConnection();
-
+  const db = await pool.getConnection();
   try {
-    await databaseConnection.beginTransaction();
+    await db.beginTransaction();
     let existingEventId = null;
     let isExistingEvent = false;
-    let allDataMatches = false;
 
     for (const eventDate of date) {
-      const [existingEventRecords] = await databaseConnection.query(
-        `SELECT * FROM v_existing_event_details
-         WHERE event_date = ? AND am_in <=> ? AND am_out <=> ? 
-         AND pm_in <=> ? AND pm_out <=> ? AND duration = ? 
-         AND event_name_id = ? AND venue = ? 
-         AND id IN (SELECT event_id FROM event_blocks WHERE block_id IN (?))
-         GROUP BY id, description, scan_personnel
-         HAVING COUNT(DISTINCT block_id) = ?`,
+      const [existingEvents] = await db.query(
+        `SELECT e.id, e.description FROM events e
+         JOIN event_dates ed ON e.id = ed.event_id
+         JOIN event_blocks eb ON e.id = eb.event_id
+         WHERE e.event_name_id = ? AND e.venue = ? AND ed.event_date = ? 
+         AND ed.am_in <=> ? AND ed.am_out <=> ? AND ed.pm_in <=> ? AND ed.pm_out <=> ? AND ed.duration = ?
+         AND eb.block_id IN (?)
+         GROUP BY e.id, e.description
+         HAVING COUNT(DISTINCT eb.block_id) = ?`,
         [
+          event_name_id,
+          venue,
           eventDate,
           am_in,
           am_out,
           pm_in,
           pm_out,
           duration,
-          event_name_id,
-          venue,
           block_ids,
           new Set(block_ids).size,
         ]
       );
 
-      if (existingEventRecords.length > 0) {
-        const existingEvent = existingEventRecords[0];
+      if (existingEvents.length > 0) {
+        existingEventId = existingEvents[0].id;
         isExistingEvent = true;
-        if (
-          existingEvent.description === description &&
-          existingEvent.scan_personnel === scan_personnel
-        ) {
-          allDataMatches = true;
-          break;
+        if (existingEvents[0].description === description) {
+          await db.rollback();
+          return res
+            .status(400)
+            .json({ message: "Event already exists with the same details." });
         }
       }
     }
 
-    if (allDataMatches && isExistingEvent) {
-      await databaseConnection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Event already exists with the same details.",
-      });
-    }
-
-    if (isExistingEvent && !allDataMatches) {
-      await databaseConnection.query(
-        `UPDATE events
-         SET description = ?, created_by = ?, scan_personnel = ?, status = 'pending'
-         WHERE id = ?`,
+    if (isExistingEvent) {
+      await db.query(
+        `UPDATE events SET description = ?, created_by = ?, scan_personnel = ?, status = 'pending' WHERE id = ?`,
         [description, admin_id_number, scan_personnel, existingEventId]
       );
-
-      await databaseConnection.query(
-        `DELETE FROM event_dates WHERE event_id = ?`,
-        [existingEventId]
-      );
-
-      const eventDateValues = date.map((eventDate) => [
-        existingEventId,
-        eventDate,
-        am_in,
-        am_out,
-        pm_in,
-        pm_out,
-        duration,
-      ]);
-
-      await databaseConnection.query(
-        `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration)
-         VALUES ?`,
-        [eventDateValues]
-      );
-
-      await databaseConnection.query(
-        `DELETE FROM event_blocks WHERE event_id = ?`,
-        [existingEventId]
-      );
-
-      const uniqueBlockIds = [...new Set(block_ids)];
-      const eventBlockValues = uniqueBlockIds.map((blockId) => [
-        existingEventId,
-        blockId,
-      ]);
-
-      await databaseConnection.query(
-        `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
-        [eventBlockValues]
-      );
-
-      await databaseConnection.commit();
-      return res.status(200).json({ message: "Event updated successfully." });
     } else {
-      const [insertedEventRecord] = await databaseConnection.query(
+      const [newEvent] = await db.query(
         `INSERT INTO events (event_name_id, venue, description, created_by, scan_personnel, status)
          VALUES (?, ?, ?, ?, ?, 'pending')`,
         [event_name_id, venue, description, admin_id_number, scan_personnel]
       );
-
-      const insertedEventId = insertedEventRecord.insertId;
-
-      const eventDateValues = date.map((eventDate) => [
-        insertedEventId,
-        eventDate,
-        am_in,
-        am_out,
-        pm_in,
-        pm_out,
-        duration,
-      ]);
-
-      await databaseConnection.query(
-        `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration)
-         VALUES ?`,
-        [eventDateValues]
-      );
-
-      const uniqueBlockIds = [...new Set(block_ids)];
-      const eventBlockValues = uniqueBlockIds.map((blockId) => [
-        insertedEventId,
-        blockId,
-      ]);
-
-      await databaseConnection.query(
-        `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
-        [eventBlockValues]
-      );
-
-      await databaseConnection.commit();
-      return res.status(201).json({ message: "Event added successfully." });
+      existingEventId = newEvent.insertId;
     }
+
+    await db.query(`DELETE FROM event_dates WHERE event_id = ?`, [
+      existingEventId,
+    ]);
+    const eventDates = date.map((d) => [
+      existingEventId,
+      d,
+      am_in,
+      am_out,
+      pm_in,
+      pm_out,
+      duration,
+    ]);
+    await db.query(
+      `INSERT INTO event_dates (event_id, event_date, am_in, am_out, pm_in, pm_out, duration) VALUES ?`,
+      [eventDates]
+    );
+
+    await db.query(`DELETE FROM event_blocks WHERE event_id = ?`, [
+      existingEventId,
+    ]);
+    const eventBlocks = [...new Set(block_ids)].map((blockId) => [
+      existingEventId,
+      blockId,
+    ]);
+    await db.query(`INSERT INTO event_blocks (event_id, block_id) VALUES ?`, [
+      eventBlocks,
+    ]);
+
+    await db.commit();
+    res
+      .status(201)
+      .json({
+        message: isExistingEvent
+          ? "Event updated successfully."
+          : "Event added successfully.",
+      });
   } catch (error) {
-    await databaseConnection.rollback();
-    return res
+    await db.rollback();
+    res
       .status(500)
       .json({ message: "Failed to add/update event.", error: error.message });
   } finally {
-    databaseConnection.release();
+    db.release();
   }
 };
 
