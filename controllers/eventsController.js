@@ -235,20 +235,22 @@ exports.addEvent = async (req, res) => {
 
   const db = await pool.getConnection();
   try {
+    console.log("Database connected successfully.");
     await db.beginTransaction();
     let existingEventId = null;
     let isExistingEvent = false;
 
     for (const eventDate of date) {
+      console.log(`Checking for existing event on date: ${eventDate}`);
+
       const [existingEvents] = await db.query(
-        `SELECT e.id, e.description FROM events e
+        `SELECT e.id, e.description, ed.event_date, ed.am_in, ed.am_out, ed.pm_in, ed.pm_out, ed.duration, GROUP_CONCAT(eb.block_id) AS block_ids
+         FROM events e
          JOIN event_dates ed ON e.id = ed.event_id
-         JOIN event_blocks eb ON e.id = eb.event_id
+         LEFT JOIN event_blocks eb ON e.id = eb.event_id
          WHERE e.event_name_id = ? AND e.venue = ? AND ed.event_date = ? 
          AND ed.am_in <=> ? AND ed.am_out <=> ? AND ed.pm_in <=> ? AND ed.pm_out <=> ? AND ed.duration = ?
-         AND eb.block_id IN (?)
-         GROUP BY e.id, e.description
-         HAVING COUNT(DISTINCT eb.block_id) = ?`,
+         GROUP BY e.id, ed.event_date, ed.am_in, ed.am_out, ed.pm_in, ed.pm_out, ed.duration`,
         [
           event_name_id,
           venue,
@@ -258,29 +260,62 @@ exports.addEvent = async (req, res) => {
           pm_in,
           pm_out,
           duration,
-          block_ids,
-          new Set(block_ids).size,
         ]
       );
 
       if (existingEvents.length > 0) {
         existingEventId = existingEvents[0].id;
         isExistingEvent = true;
-        if (existingEvents[0].description === description) {
+        const existingBlockIds = existingEvents[0].block_ids
+          .split(",")
+          .map(Number);
+
+        if (
+          existingEvents[0].description === description &&
+          existingEvents[0].am_in === am_in &&
+          existingEvents[0].am_out === am_out &&
+          existingEvents[0].pm_in === pm_in &&
+          existingEvents[0].pm_out === pm_out &&
+          existingEvents[0].duration === duration &&
+          JSON.stringify(new Set(block_ids)) ===
+            JSON.stringify(new Set(existingBlockIds))
+        ) {
+          console.log(
+            "The same event already exists with the exact same details."
+          );
           await db.rollback();
-          return res
-            .status(400)
-            .json({ message: "Event already exists with the same details." });
+          return res.status(400).json({
+            message:
+              "The same event already exists with the exact same details.",
+          });
+        }
+
+        if (
+          existingEvents[0].description !== description ||
+          existingEvents[0].duration !== duration ||
+          !block_ids.every((blockId) => existingBlockIds.includes(blockId)) ||
+          existingEvents[0].event_date !== eventDate
+        ) {
+          console.log(
+            "The same event already exists. Please visit the edit page to modify event details."
+          );
+          await db.rollback();
+          return res.status(400).json({
+            message:
+              "The same event already exists. Please visit the edit page to modify event details.",
+          });
         }
       }
     }
 
     if (isExistingEvent) {
+      console.log("Event has existing details, some fields are modified.");
       await db.query(
         `UPDATE events SET description = ?, created_by = ?, scan_personnel = ?, status = 'pending' WHERE id = ?`,
         [description, admin_id_number, scan_personnel, existingEventId]
       );
     } else {
+      console.log("Adding new event.");
       const [newEvent] = await db.query(
         `INSERT INTO events (event_name_id, venue, description, created_by, scan_personnel, status)
          VALUES (?, ?, ?, ?, ?, 'pending')`,
@@ -306,6 +341,7 @@ exports.addEvent = async (req, res) => {
       [eventDates]
     );
 
+    console.log("Adding event blocks.");
     await db.query(`DELETE FROM event_blocks WHERE event_id = ?`, [
       existingEventId,
     ]);
@@ -318,20 +354,21 @@ exports.addEvent = async (req, res) => {
     ]);
 
     await db.commit();
-    res
-      .status(201)
-      .json({
-        message: isExistingEvent
-          ? "Event updated successfully."
-          : "Event added successfully.",
-      });
+    console.log("Event added/updated successfully.");
+    res.status(201).json({
+      message: isExistingEvent
+        ? "The same event already exists. Please visit the edit page to modify event details."
+        : "Event added successfully.",
+    });
   } catch (error) {
+    console.error("Error occurred during event add/update:", error);
     await db.rollback();
     res
       .status(500)
       .json({ message: "Failed to add/update event.", error: error.message });
   } finally {
     db.release();
+    console.log("Database connection released.");
   }
 };
 
