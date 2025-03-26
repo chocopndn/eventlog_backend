@@ -44,7 +44,7 @@ exports.signup = async (req, res) => {
 
     const [userRecords] = await connection.query(
       `SELECT * FROM v_users WHERE id_number = ? AND first_name = ? AND (middle_name IS NULL OR middle_name = ?) 
-      AND last_name = ? AND (suffix IS NULL OR suffix = ?) AND department_name = ?`,
+      AND last_name = ? AND (suffix IS NULL OR suffix = ?) AND department_id = ?`,
       [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
 
