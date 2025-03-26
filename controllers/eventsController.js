@@ -209,7 +209,6 @@ exports.addEvent = async (req, res) => {
     event_name_id,
     venue,
     description,
-    department_id,
     block_ids,
     date,
     am_in,
@@ -225,7 +224,6 @@ exports.addEvent = async (req, res) => {
     !event_name_id ||
     !venue ||
     !description ||
-    !department_id ||
     !block_ids ||
     !block_ids.length ||
     !date ||
@@ -242,22 +240,56 @@ exports.addEvent = async (req, res) => {
   try {
     await databaseConnection.beginTransaction();
     let existingEventId = null;
-    let isExisting = false;
+    let isExistingEvent = false;
+    let allDataMatches = false;
 
-    for (let eventDate of date) {
+    for (const eventDate of date) {
       const [existingEventRecords] = await databaseConnection.query(
-        `SELECT * FROM v_existing_event WHERE event_name_id = ? AND venue = ? AND event_date = ?`,
-        [event_name_id, venue, eventDate]
+        `SELECT events.id, events.description, events.scan_personnel
+         FROM events
+         INNER JOIN event_dates ON events.id = event_dates.event_id AND event_dates.event_date = ? AND event_dates.am_in <=> ? AND event_dates.am_out <=> ? AND event_dates.pm_in <=> ? AND event_dates.pm_out <=> ? AND event_dates.duration = ?
+         INNER JOIN event_blocks ON events.id = event_blocks.event_id
+         WHERE events.event_name_id = ? AND events.venue = ? AND event_blocks.block_id IN (?)
+         GROUP BY events.id, events.description, events.scan_personnel
+         HAVING COUNT(DISTINCT event_blocks.block_id) = ?`,
+        [
+          eventDate,
+          am_in,
+          am_out,
+          pm_in,
+          pm_out,
+          duration,
+          event_name_id,
+          venue,
+          block_ids,
+          new Set(block_ids).size,
+        ]
       );
 
       if (existingEventRecords.length > 0) {
-        existingEventId = existingEventRecords[0].id;
-        isExisting = true;
-        break;
+        const existingEvent = existingEventRecords[0];
+        isExistingEvent = true;
+        if (
+          existingEvent.description === description &&
+          existingEvent.scan_personnel === scan_personnel
+        ) {
+          allDataMatches = true;
+          break;
+        }
       }
     }
 
-    if (isExisting) {
+    if (allDataMatches && isExistingEvent) {
+      await databaseConnection.rollback();
+      return res
+        .status(400)
+        .json({
+          message:
+            "Event with identical data already exists for one or more dates.",
+        });
+    }
+
+    if (isExistingEvent && !allDataMatches) {
       await databaseConnection.query(
         `UPDATE events
          SET description = ?, created_by = ?, scan_personnel = ?, status = 'pending'
@@ -286,28 +318,21 @@ exports.addEvent = async (req, res) => {
         [eventDateValues]
       );
 
-      const [existingBlocksResult] = await databaseConnection.query(
-        `SELECT block_id FROM event_blocks WHERE event_id = ?`,
+      await databaseConnection.query(
+        `DELETE FROM event_blocks WHERE event_id = ?`,
         [existingEventId]
       );
 
-      const existingBlockIds = existingBlocksResult.map((row) => row.block_id);
+      const uniqueBlockIds = [...new Set(block_ids)];
+      const eventBlockValues = uniqueBlockIds.map((blockId) => [
+        existingEventId,
+        blockId,
+      ]);
 
-      const newBlockIdsToAdd = block_ids.filter(
-        (blockId) => !existingBlockIds.includes(blockId)
+      await databaseConnection.query(
+        `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
+        [eventBlockValues]
       );
-
-      if (newBlockIdsToAdd.length > 0) {
-        const newEventBlockValues = newBlockIdsToAdd.map((block_id) => [
-          existingEventId,
-          block_id,
-        ]);
-
-        await databaseConnection.query(
-          `INSERT INTO event_blocks (event_id, block_id) VALUES ?`,
-          [newEventBlockValues]
-        );
-      }
 
       await databaseConnection.commit();
       return res.status(200).json({ message: "Event updated successfully." });
@@ -337,9 +362,9 @@ exports.addEvent = async (req, res) => {
       );
 
       const uniqueBlockIds = [...new Set(block_ids)];
-      const eventBlockValues = uniqueBlockIds.map((block_id) => [
+      const eventBlockValues = uniqueBlockIds.map((blockId) => [
         insertedEventId,
-        block_id,
+        blockId,
       ]);
 
       await databaseConnection.query(
