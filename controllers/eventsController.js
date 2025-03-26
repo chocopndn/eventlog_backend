@@ -411,3 +411,61 @@ exports.getAllEventNames = async (req, res) => {
       .json({ success: false, message: "Failed to fetch event names." });
   }
 };
+
+exports.getEditableEvents = async (req, res) => {
+  try {
+    const db = await pool.getConnection();
+
+    const [events] = await db.query(`
+      SELECT * FROM v_editable_events
+      ORDER BY status, all_dates
+    `);
+
+    const simpleEvents = events.map((event) => {
+      let blockIds = [];
+      if (event.block_ids) {
+        try {
+          blockIds = JSON.parse(event.block_ids.replace(/[\n\r\s]+/g, ""));
+        } catch (e) {
+          console.log("Couldn't parse block IDs:", event.block_ids);
+        }
+      }
+
+      const blockNames = event.block_names ? event.block_names.split(", ") : [];
+
+      const dates = event.all_dates ? event.all_dates.split(", ") : [];
+
+      return {
+        id: event.event_id,
+        name: event.event_name,
+        venue: event.venue,
+        status: event.status,
+        dates: dates,
+        am_in: event.am_in,
+        am_out: event.am_out,
+        pm_in: event.pm_in,
+        pm_out: event.pm_out,
+        duration: event.duration,
+        blocks: {
+          ids: blockIds,
+          names: blockNames,
+        },
+        created_by: event.created_by_name,
+        approved_by: event.approved_by_name || "Not approved",
+      };
+    });
+
+    res.json({
+      success: true,
+      events: simpleEvents,
+    });
+
+    db.release();
+  } catch (error) {
+    console.log("Error getting events:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get events",
+    });
+  }
+};
