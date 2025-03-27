@@ -11,6 +11,7 @@ router.route("/admin/edit").post(eventController.editEvent);
 router.route("/admin/edit/:id").put(eventController.updateEventById);
 router.route("/names").get(eventController.getAllEventNames);
 router.route("/editable").get(eventController.getEditableEvents);
-router.get("/:id", eventController.getEventById);
+router.get("/events/:id", eventController.getEventById);
+router.route("/approved-ongoing").get(eventController.getApprovedOngoingEvents);
 
 module.exports = router;

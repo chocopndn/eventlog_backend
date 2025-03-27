@@ -602,3 +602,18 @@ exports.updateEventById = async (req, res) => {
     db.release();
   }
 };
+
+exports.getApprovedOngoingEvents = async (req, res) => {
+  try {
+    const [events] = await pool.query(
+      "SELECT * FROM v_approved_ongoing_events ORDER BY event_dates ASC"
+    );
+
+    return res.json({ success: true, events: events });
+  } catch (error) {
+    console.error("Error fetching approved ongoing events:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch events." });
+  }
+};
