@@ -6,20 +6,21 @@ const CryptoJS = require("crypto-js");
 exports.userUpcomingEvents = async (req, res) => {
   const { block_id } = req.body;
 
-  try {
-    let query = `SELECT * FROM v_user_upcoming_events`;
-    let queryParams = [];
+  if (!block_id) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Block ID is required" });
+  }
 
-    if (block_id !== null && block_id !== undefined) {
-      query += ` WHERE JSON_CONTAINS(block_ids, JSON_QUOTE(?))`;
-      queryParams.push(block_id);
-    }
+  try {
+    let query = `SELECT * FROM v_user_upcoming_events WHERE JSON_CONTAINS(block_ids, CAST(? AS CHAR))`;
+    let queryParams = [block_id];
 
     query += ` ORDER BY JSON_UNQUOTE(JSON_EXTRACT(event_dates, "$[0]"));`;
 
     const [events] = await pool.query(query, queryParams);
 
-    return res.json({ success: true, events });
+    return res.json({ success: true, events: events });
   } catch (error) {
     console.error(error);
     return res
@@ -578,7 +579,7 @@ exports.updateEventById = async (req, res) => {
 exports.getApprovedOngoingEvents = async (req, res) => {
   try {
     const [events] = await pool.query(
-      "SELECT * FROM v_approved_ongoing_events ORDER BY event_dates ASC"
+      "SELECT * FROM v_user_upcoming_events ORDER BY event_dates ASC"
     );
 
     return res.json({ success: true, events: events });
