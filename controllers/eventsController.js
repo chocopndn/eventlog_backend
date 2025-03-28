@@ -11,43 +11,15 @@ exports.userUpcomingEvents = async (req, res) => {
     let queryParams = [];
 
     if (block_id !== null && block_id !== undefined) {
-      query += ` WHERE block_id = ? OR block_id IS NULL`;
+      query += ` WHERE JSON_CONTAINS(block_ids, JSON_QUOTE(?))`;
       queryParams.push(block_id);
     }
 
-    query += ` ORDER BY event_date;`;
+    query += ` ORDER BY JSON_UNQUOTE(JSON_EXTRACT(event_dates, "$[0]"));`;
 
     const [events] = await pool.query(query, queryParams);
 
-    if (!events.length) {
-      return res.json({ success: true, events: [] });
-    }
-
-    const formattedEvents = events.reduce((acc, eventRecord) => {
-      const event = acc.find((ev) => ev.event_id === eventRecord.event_id);
-
-      if (!event) {
-        acc.push({
-          event_id: eventRecord.event_id,
-          event_name: eventRecord.event_name,
-          venue: eventRecord.venue,
-          scan_personnel: eventRecord.scan_personnel,
-          event_dates: [moment(eventRecord.event_date).format("YYYY-MM-DD")],
-          am_in: eventRecord.am_in,
-          am_out: eventRecord.am_out,
-          pm_in: eventRecord.pm_in,
-          pm_out: eventRecord.pm_out,
-        });
-      } else {
-        event.event_dates.push(
-          moment(eventRecord.event_date).format("YYYY-MM-DD")
-        );
-      }
-
-      return acc;
-    }, []);
-
-    return res.json({ success: true, events: formattedEvents });
+    return res.json({ success: true, events });
   } catch (error) {
     console.error(error);
     return res
