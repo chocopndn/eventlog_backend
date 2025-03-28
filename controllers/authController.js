@@ -109,27 +109,29 @@ exports.login = async (req, res) => {
       [id_number]
     );
     const [adminData] = await connection.query(
-      "SELECT * FROM v_admins WHERE id_number = ?",
+      "SELECT * FROM v_admin_details WHERE id_number = ?",
       [id_number]
     );
 
     const account = userData[0] || adminData[0];
 
-    if (!account || !account.password_hash) {
+    if (!account) {
       return res.status(404).json({
         success: false,
         message: "Account not found. Please sign up.",
       });
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      password,
-      account.password_hash
-    );
-    if (!isPasswordValid) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid password." });
+    if (userData[0]) {
+      const isPasswordValid = await bcrypt.compare(
+        password,
+        account.password_hash
+      );
+      if (!isPasswordValid) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Invalid password." });
+      }
     }
 
     const token = jwt.sign(
@@ -138,6 +140,7 @@ exports.login = async (req, res) => {
     );
 
     const { password_hash, ...userWithoutPasswordHash } = account;
+
     return res.status(200).json({
       success: true,
       message: "Login successful.",
