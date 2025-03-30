@@ -207,3 +207,160 @@ const sendCredentials = async (email, id_number, password) => {
     console.error("Error sending email:", error);
   }
 };
+
+exports.editAdmin = async (req, res) => {
+  const { id_number } = req.params;
+  const {
+    department_id,
+    first_name,
+    middle_name,
+    last_name,
+    suffix,
+    email,
+    role_id,
+  } = req.body;
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+
+    const [existingAdmin] = await connection.query(
+      "SELECT * FROM admins WHERE id_number = ?",
+      [id_number]
+    );
+
+    if (!existingAdmin.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin not found",
+      });
+    }
+
+    if (role_id !== undefined) {
+      const validRoles = [3, 4];
+      if (!validRoles.includes(role_id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid role_id. Must be 3 (Admin) or 4 (Super Admin)",
+        });
+      }
+    }
+
+    if (department_id !== undefined) {
+      const [department] = await connection.query(
+        "SELECT * FROM departments WHERE id = ?",
+        [department_id]
+      );
+      if (!department.length) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid department_id",
+        });
+      }
+    }
+
+    if (email !== undefined) {
+      const [existingEmail] = await connection.query(
+        "SELECT * FROM admins WHERE email = ? AND id_number != ?",
+        [email, id_number]
+      );
+      if (existingEmail.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: "An admin with this email already exists",
+        });
+      }
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (department_id !== undefined) {
+      updates.push("department_id = ?");
+      params.push(department_id);
+    }
+    if (first_name !== undefined) {
+      updates.push("first_name = ?");
+      params.push(first_name);
+    }
+    if (middle_name !== undefined) {
+      updates.push("middle_name = ?");
+      params.push(middle_name || null);
+    }
+    if (last_name !== undefined) {
+      updates.push("last_name = ?");
+      params.push(last_name);
+    }
+    if (suffix !== undefined) {
+      updates.push("suffix = ?");
+      params.push(suffix || null);
+    }
+    if (email !== undefined) {
+      updates.push("email = ?");
+      params.push(email || null);
+    }
+    if (role_id !== undefined) {
+      updates.push("role_id = ?");
+      params.push(role_id);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields provided for update",
+      });
+    }
+
+    params.push(id_number);
+
+    const query = `
+      UPDATE admins 
+      SET ${updates.join(", ")} 
+      WHERE id_number = ?
+    `;
+
+    await connection.query(query, params);
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin updated successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update admin",
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.fetchAdminById = async (req, res) => {
+  try {
+    const { id_number } = req.params;
+
+    const [admin] = await pool.query(
+      "SELECT * FROM v_admin_details WHERE id_number = ?",
+      [id_number]
+    );
+
+    if (!admin.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      admin: admin[0],
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch admin details",
+      error: error.message,
+    });
+  }
+};
