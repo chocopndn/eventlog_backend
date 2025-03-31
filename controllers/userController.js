@@ -2,6 +2,7 @@ const { pool } = require("../config/db");
 const bcrypt = require("bcrypt");
 
 const handleError = (res, error, defaultMessage = "Internal server error") => {
+  console.error(error);
   return res.status(error.status || 500).json({
     success: false,
     message: error.message || defaultMessage,
@@ -22,20 +23,18 @@ exports.changePassword = async (req, res) => {
   try {
     connection = await pool.getConnection();
 
-    const [account] = await connection.query(
-      `SELECT password_hash, 'users' AS table_name FROM users WHERE email = ? 
-       UNION 
-       SELECT password_hash, 'admins' AS table_name FROM admins WHERE email = ?`,
-      [email, email]
+    const [user] = await connection.query(
+      "SELECT password_hash FROM v_users WHERE email = ?",
+      [email]
     );
 
-    if (!account.length) {
+    if (!user.length) {
       return res
         .status(404)
         .json({ success: false, message: "User not found." });
     }
 
-    const { password_hash, table_name } = account[0];
+    const { password_hash } = user[0];
 
     const isSamePassword = await bcrypt.compare(newPassword, password_hash);
     if (isSamePassword) {
@@ -48,7 +47,7 @@ exports.changePassword = async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     await connection.query(
-      `UPDATE ${table_name} SET password_hash = ? WHERE email = ?`,
+      "UPDATE users SET password_hash = ? WHERE email = ?",
       [hashedPassword, email]
     );
 
@@ -64,25 +63,85 @@ exports.changePassword = async (req, res) => {
 };
 
 exports.getAllUsers = async (req, res) => {
+  const { search, page = 1, limit = 10 } = req.query;
+  const offset = (page - 1) * limit;
+
   try {
-    const [users] = await pool.query("SELECT * FROM v_users");
+    let query =
+      "SELECT id_number, role_id, block_id, first_name, middle_name, last_name, suffix, email, role_name, block_name, course_name, department_code, year_level_name FROM v_users";
+    const queryParams = [];
+
+    if (search) {
+      query +=
+        " WHERE id_number LIKE ? OR first_name LIKE ? OR middle_name LIKE ? OR last_name LIKE ? OR suffix LIKE ? OR email LIKE ? OR role_name LIKE ? OR block_name LIKE ? OR course_name LIKE ? OR department_code LIKE ? OR year_level_name LIKE ?";
+      queryParams.push(
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`,
+        `%${search}%`
+      );
+    }
+
+    query += " LIMIT ? OFFSET ?";
+    queryParams.push(parseInt(limit), parseInt(offset));
+
+    const [users] = await pool.query(query, queryParams);
+
+    const countQuery = search
+      ? `
+        SELECT COUNT(*) AS total 
+        FROM v_users 
+        WHERE id_number LIKE ? OR first_name LIKE ? OR middle_name LIKE ? OR last_name LIKE ? OR suffix LIKE ? OR email LIKE ? OR role_name LIKE ? OR block_name LIKE ? OR course_name LIKE ? OR department_code LIKE ? OR year_level_name LIKE ?
+      `
+      : "SELECT COUNT(*) AS total FROM v_users";
+    const countParams = search
+      ? [
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+        ]
+      : [];
+    const [totalCountResult] = await pool.query(countQuery, countParams);
+    const total = totalCountResult[0].total;
 
     if (!users.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "No users found" });
+      return res.status(404).json({
+        success: false,
+        message: "No users found",
+      });
     }
 
     return res.status(200).json({
       success: true,
       data: users,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: parseInt(limit),
+      },
     });
   } catch (error) {
     return handleError(res, error);
   }
 };
 
-exports.getAllUsersByID = async (req, res) => {
+exports.getUserByID = async (req, res) => {
   const id_number = req.params.id;
   let connection;
 
@@ -94,18 +153,16 @@ exports.getAllUsersByID = async (req, res) => {
       [id_number]
     );
 
-    if (user.length == 0) {
+    if (user.length === 0) {
       return res.status(404).json({
         success: false,
         message: "User not found",
       });
     }
 
-    const { password_hash, ...userWithoutPassword } = user[0];
-
     return res.status(200).json({
       success: true,
-      user: userWithoutPassword,
+      user: user[0],
     });
   } catch (error) {
     return handleError(res, error);
@@ -114,35 +171,214 @@ exports.getAllUsersByID = async (req, res) => {
   }
 };
 
-exports.getUsersByDepartment = async (req, res) => {
-  const department_id = req.params.id;
-  let connection;
+exports.editUser = async (req, res) => {
+  const id_number = req.params.id;
+  const { first_name, last_name, email, role_id, block_id } = req.body;
 
+  if (!id_number || !first_name || !last_name || !role_id || !block_id) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "All fields (id_number, first_name, last_name, email, role_id, block_id) are required.",
+    });
+  }
+
+  let connection;
   try {
     connection = await pool.getConnection();
-    const [users] = await connection.query(
-      "SELECT * FROM v_users WHERE department_id = ?",
-      [department_id]
+
+    const [result] = await connection.query(
+      "UPDATE users SET first_name = ?, last_name = ?, email = ?, role_id = ?, block_id = ? WHERE id_number = ?",
+      [first_name, last_name, email, role_id, block_id, id_number]
     );
 
-    if (users.length === 0) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: "No user found!",
+        message: "User not found.",
       });
     }
 
-    const usersWithoutPassword = users.map(
-      ({ password_hash, ...user }) => user
-    );
-
     return res.status(200).json({
       success: true,
-      users: usersWithoutPassword,
+      message: "User details updated successfully.",
     });
   } catch (error) {
     return handleError(res, error);
   } finally {
     if (connection) connection.release();
+  }
+};
+
+exports.deleteUser = async (req, res) => {
+  const id_number = req.params.id;
+  let connection;
+
+  try {
+    connection = await pool.getConnection();
+
+    const [result] = await connection.query(
+      "DELETE FROM users WHERE id_number = ?",
+      [id_number]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "User deleted successfully.",
+    });
+  } catch (error) {
+    return handleError(res, error);
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.addUser = async (req, res) => {
+  const {
+    id_number,
+    role_id,
+    block_id,
+    first_name,
+    middle_name,
+    last_name,
+    suffix,
+    email,
+  } = req.body;
+
+  if (!id_number || !role_id || !block_id || !first_name || !last_name) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing required fields",
+    });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+
+    const [existingUser] = await connection.query(
+      "SELECT * FROM users WHERE id_number = ?",
+      [id_number]
+    );
+
+    if (existingUser.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "A user with this ID number already exists.",
+      });
+    }
+
+    const [role] = await connection.query("SELECT id FROM roles WHERE id = ?", [
+      role_id,
+    ]);
+    if (!role.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role_id. Role does not exist.",
+      });
+    }
+
+    const [block] = await connection.query(
+      "SELECT id FROM blocks WHERE id = ?",
+      [block_id]
+    );
+    if (!block.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid block_id. Block does not exist.",
+      });
+    }
+
+    if (email) {
+      const [existingEmail] = await connection.query(
+        "SELECT * FROM users WHERE email = ?",
+        [email]
+      );
+      if (existingEmail.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: "A user with this email already exists.",
+        });
+      }
+    }
+
+    const generatedPassword = crypto.randomBytes(6).toString("hex");
+
+    const password_hash = await bcrypt.hash(generatedPassword, 10);
+
+    const query = `
+      INSERT INTO users (
+        id_number, role_id, block_id, first_name, middle_name, 
+        last_name, suffix, email, password_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    await connection.query(query, [
+      id_number,
+      role_id,
+      block_id,
+      first_name,
+      middle_name || null,
+      last_name,
+      suffix || null,
+      email || null,
+      password_hash,
+    ]);
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required.",
+      });
+    }
+
+    if (email) {
+      sendCredentials(email, id_number, generatedPassword);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "User added successfully. Login credentials sent to email.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add user",
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+const sendCredentials = async (email, id_number, password) => {
+  try {
+    const transporter = nodemailer.createTransport({
+      host: "smtp.zoho.com",
+      port: 465,
+      secure: true,
+      auth: { user: config.EMAIL_USER, pass: config.EMAIL_PASS },
+    });
+
+    await transporter.sendMail({
+      from: '"Eventlog" <eventlogucv@zohomail.com>',
+      to: email,
+      subject: "Your Login Credentials",
+      text: `Your ID Number is: ${id_number}\nYour initial password is: ${password}`,
+      html: `
+        <p>Your ID Number is: <b>${id_number}</b></p>
+        <p>Your initial password is: <b>${password}</b></p>
+        <p>Please log in and change your password immediately.</p>
+      `,
+    });
+  } catch (error) {
+    console.error("Error sending email:", error);
   }
 };
