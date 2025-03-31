@@ -8,9 +8,18 @@ const handleError = (res, error, defaultMessage = "Internal server error") => {
   });
 };
 
-exports.getDepartment = async (req, res) => {
+exports.getDepartments = async (req, res) => {
   try {
-    const [departments] = await pool.query("SELECT * FROM v_departments");
+    const searchQuery = req.query.search || "";
+
+    const query = `
+        SELECT * FROM v_departments 
+        WHERE department_name LIKE ? OR department_code LIKE ?
+      `;
+
+    const searchTerm = `%${searchQuery}%`;
+
+    const [departments] = await pool.query(query, [searchTerm, searchTerm]);
 
     if (!departments.length) {
       return res
@@ -19,6 +28,102 @@ exports.getDepartment = async (req, res) => {
     }
 
     return res.status(200).json({ success: true, departments });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.getDepartmentById = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [departments] = await pool.query(
+      "SELECT * FROM v_departments WHERE department_id = ?",
+      [id]
+    );
+    if (!departments.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Department not found" });
+    }
+    return res.status(200).json({ success: true, department: departments[0] });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.addDepartment = async (req, res) => {
+  const { department_name, department_code } = req.body;
+  try {
+    if (!department_name || !department_code) {
+      return res.status(400).json({
+        success: false,
+        message: "Department name and code are required",
+      });
+    }
+    const [result] = await pool.query(
+      "INSERT INTO departments (name, code) VALUES (?, ?)",
+      [department_name, department_code]
+    );
+    const newDepartmentId = result.insertId;
+    return res.status(201).json({
+      success: true,
+      message: "Department added successfully",
+      department: {
+        department_id: newDepartmentId,
+        department_name,
+        department_code,
+      },
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.updateDepartment = async (req, res) => {
+  const { id } = req.params;
+  const { department_name, department_code } = req.body;
+  try {
+    const [departments] = await pool.query(
+      "SELECT * FROM departments WHERE id = ?",
+      [id]
+    );
+    if (!departments.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Department not found" });
+    }
+    await pool.query("UPDATE departments SET name = ?, code = ? WHERE id = ?", [
+      department_name,
+      department_code,
+      id,
+    ]);
+    return res.status(200).json({
+      success: true,
+      message: "Department updated successfully",
+      department: { department_id: id, department_name, department_code },
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.deleteDepartment = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [departments] = await pool.query(
+      "SELECT * FROM departments WHERE id = ?",
+      [id]
+    );
+    if (!departments.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Department not found" });
+    }
+    await pool.query("DELETE FROM departments WHERE id = ?", [id]);
+    return res.status(200).json({
+      success: true,
+      message: "Department deleted successfully",
+    });
   } catch (error) {
     return handleError(res, error);
   }
