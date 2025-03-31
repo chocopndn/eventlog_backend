@@ -67,8 +67,7 @@ exports.getAllUsers = async (req, res) => {
   const offset = (page - 1) * limit;
 
   try {
-    let query =
-      "SELECT id_number, role_id, block_id, first_name, middle_name, last_name, suffix, email, role_name, block_name, course_name, department_code, year_level_name FROM v_users";
+    let query = "SELECT * FROM v_users";
     const queryParams = [];
 
     if (search) {
@@ -173,23 +172,44 @@ exports.getUserByID = async (req, res) => {
 
 exports.editUser = async (req, res) => {
   const id_number = req.params.id;
-  const { first_name, last_name, email, role_id, block_id } = req.body;
+  const { first_name, last_name, email, role_id, block_id, status, suffix } =
+    req.body;
 
-  if (!id_number || !first_name || !last_name || !role_id || !block_id) {
+  // Make sure that required fields are checked for emptiness
+  if (
+    !id_number ||
+    !first_name ||
+    !last_name ||
+    !role_id ||
+    !block_id ||
+    !status
+  ) {
     return res.status(400).json({
       success: false,
       message:
-        "All fields (id_number, first_name, last_name, email, role_id, block_id) are required.",
+        "All fields (id_number, first_name, last_name, email, role_id, block_id, status) are required.",
     });
   }
+
+  // If status is 'unregistered', email can be null
+  const finalEmail = status === "unregistered" && !email ? null : email;
 
   let connection;
   try {
     connection = await pool.getConnection();
 
     const [result] = await connection.query(
-      "UPDATE users SET first_name = ?, last_name = ?, email = ?, role_id = ?, block_id = ? WHERE id_number = ?",
-      [first_name, last_name, email, role_id, block_id, id_number]
+      "UPDATE users SET first_name = ?, last_name = ?, email = ?, role_id = ?, block_id = ?, status = ?, suffix = ? WHERE id_number = ?",
+      [
+        first_name,
+        last_name,
+        finalEmail, // Use the finalEmail variable here
+        role_id,
+        block_id,
+        status,
+        suffix || null,
+        id_number,
+      ]
     );
 
     if (result.affectedRows === 0) {
@@ -210,7 +230,7 @@ exports.editUser = async (req, res) => {
   }
 };
 
-exports.deleteUser = async (req, res) => {
+exports.disableUser = async (req, res) => {
   const id_number = req.params.id;
   let connection;
 
@@ -218,7 +238,7 @@ exports.deleteUser = async (req, res) => {
     connection = await pool.getConnection();
 
     const [result] = await connection.query(
-      "DELETE FROM users WHERE id_number = ?",
+      "UPDATE users SET status = 'disabled' WHERE id_number = ?",
       [id_number]
     );
 
@@ -231,7 +251,7 @@ exports.deleteUser = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "User deleted successfully.",
+      message: "User disabled successfully.",
     });
   } catch (error) {
     return handleError(res, error);
@@ -309,15 +329,14 @@ exports.addUser = async (req, res) => {
       }
     }
 
-    const generatedPassword = crypto.randomBytes(6).toString("hex");
-
-    const password_hash = await bcrypt.hash(generatedPassword, 10);
+    const password = Math.random().toString(36).slice(-8);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const query = `
       INSERT INTO users (
         id_number, role_id, block_id, first_name, middle_name, 
-        last_name, suffix, email, password_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        last_name, suffix, email, password_hash, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
     `;
 
     await connection.query(query, [
@@ -329,18 +348,11 @@ exports.addUser = async (req, res) => {
       last_name,
       suffix || null,
       email || null,
-      password_hash,
+      hashedPassword,
     ]);
 
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required.",
-      });
-    }
-
     if (email) {
-      sendCredentials(email, id_number, generatedPassword);
+      sendCredentials(email, id_number, password);
     }
 
     return res.status(201).json({
