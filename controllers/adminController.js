@@ -59,11 +59,14 @@ exports.deleteAdmin = async (req, res) => {
         .json({ success: false, message: "Admin not found" });
     }
 
-    await pool.query("DELETE FROM admins WHERE id_number = ?", [id_number]);
+    await pool.query(
+      "UPDATE admins SET status = 'deleted' WHERE id_number = ?",
+      [id_number]
+    );
 
     return res.status(200).json({
       success: true,
-      message: "Admin deleted successfully",
+      message: "Admin marked as deleted successfully",
     });
   } catch (error) {
     return handleError(res, error);
@@ -218,6 +221,7 @@ exports.editAdmin = async (req, res) => {
     suffix,
     email,
     role_id,
+    status,
   } = req.body;
 
   let connection;
@@ -272,6 +276,16 @@ exports.editAdmin = async (req, res) => {
       }
     }
 
+    if (status !== undefined) {
+      const validStatuses = ["active", "pending", "deleted"];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid status. Must be 'active', 'pending', or 'deleted'",
+        });
+      }
+    }
+
     const updates = [];
     const params = [];
 
@@ -302,6 +316,10 @@ exports.editAdmin = async (req, res) => {
     if (role_id !== undefined) {
       updates.push("role_id = ?");
       params.push(role_id);
+    }
+    if (status !== undefined) {
+      updates.push("status = ?");
+      params.push(status);
     }
 
     if (updates.length === 0) {
