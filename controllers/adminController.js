@@ -44,29 +44,29 @@ exports.getAllAdmins = async (req, res) => {
   }
 };
 
-exports.deleteAdmin = async (req, res) => {
+exports.disableAdmin = async (req, res) => {
   try {
     const { id_number } = req.params;
 
-    const [admin] = await pool.query(
+    const [rows] = await pool.query(
       "SELECT * FROM admins WHERE id_number = ?",
       [id_number]
     );
 
-    if (!admin.length) {
+    if (rows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Admin not found" });
     }
 
     await pool.query(
-      "UPDATE admins SET status = 'deleted' WHERE id_number = ?",
+      "UPDATE admins SET status = 'disabled' WHERE id_number = ?",
       [id_number]
     );
 
     return res.status(200).json({
       success: true,
-      message: "Admin marked as deleted successfully",
+      message: "Admin disabled successfully",
     });
   } catch (error) {
     return handleError(res, error);
@@ -277,11 +277,11 @@ exports.editAdmin = async (req, res) => {
     }
 
     if (status !== undefined) {
-      const validStatuses = ["active", "pending", "deleted"];
+      const validStatuses = ["active", "pending", "disabled"];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({
           success: false,
-          message: "Invalid status. Must be 'active', 'pending', or 'deleted'",
+          message: "Invalid status. Must be 'active', 'pending', or 'disabled'",
         });
       }
     }
