@@ -37,7 +37,7 @@ exports.getDepartmentById = async (req, res) => {
   const { id } = req.params;
   try {
     const [departments] = await pool.query(
-      "SELECT * FROM v_departments WHERE department_id = ?",
+      "SELECT * FROM view_departments WHERE department_id = ?",
       [id]
     );
     if (!departments.length) {
@@ -81,7 +81,7 @@ exports.addDepartment = async (req, res) => {
 
 exports.updateDepartment = async (req, res) => {
   const { id } = req.params;
-  const { department_name, department_code } = req.body;
+  const { department_name, department_code, status } = req.body;
   try {
     const [departments] = await pool.query(
       "SELECT * FROM departments WHERE id = ?",
@@ -92,11 +92,10 @@ exports.updateDepartment = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Department not found" });
     }
-    await pool.query("UPDATE departments SET name = ?, code = ? WHERE id = ?", [
-      department_name,
-      department_code,
-      id,
-    ]);
+    await pool.query(
+      "UPDATE departments SET name = ?, code = ?, status = ? WHERE id = ?",
+      [department_name, department_code, status, id]
+    );
     return res.status(200).json({
       success: true,
       message: "Department updated successfully",
@@ -109,22 +108,30 @@ exports.updateDepartment = async (req, res) => {
 
 exports.deleteDepartment = async (req, res) => {
   const { id } = req.params;
+
   try {
     const [departments] = await pool.query(
       "SELECT * FROM departments WHERE id = ?",
       [id]
     );
+
     if (!departments.length) {
       return res
         .status(404)
         .json({ success: false, message: "Department not found" });
     }
-    await pool.query("DELETE FROM departments WHERE id = ?", [id]);
+
+    await pool.query("UPDATE departments SET status = ? WHERE id = ?", [
+      "deleted",
+      id,
+    ]);
+
     return res.status(200).json({
       success: true,
-      message: "Department deleted successfully",
+      message: "Department soft-deleted successfully",
     });
   } catch (error) {
+    console.log(error);
     return handleError(res, error);
   }
 };
