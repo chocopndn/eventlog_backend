@@ -24,17 +24,17 @@ exports.changePassword = async (req, res) => {
     connection = await pool.getConnection();
 
     const [user] = await connection.query(
-      "SELECT password_hash FROM v_users WHERE email = ?",
-      [email]
+      "SELECT 'users' AS table_name, password_hash FROM users WHERE email = ? UNION ALL SELECT 'admins', password_hash FROM admins WHERE email = ?",
+      [email, email]
     );
 
     if (!user.length) {
       return res
         .status(404)
-        .json({ success: false, message: "User not found." });
+        .json({ success: false, message: "Email not found." });
     }
 
-    const { password_hash } = user[0];
+    const { table_name, password_hash } = user[0];
 
     const isSamePassword = await bcrypt.compare(newPassword, password_hash);
     if (isSamePassword) {
@@ -47,7 +47,7 @@ exports.changePassword = async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     await connection.query(
-      "UPDATE users SET password_hash = ? WHERE email = ?",
+      `UPDATE ${table_name} SET password_hash = ? WHERE email = ?`,
       [hashedPassword, email]
     );
 
