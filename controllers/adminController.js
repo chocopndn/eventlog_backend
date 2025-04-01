@@ -17,7 +17,7 @@ exports.getAllAdmins = async (req, res) => {
     const searchQuery = req.query.search || "";
 
     const query = `
-      SELECT * FROM v_admin_details 
+      SELECT * FROM view_admins
       WHERE id_number LIKE ? 
          OR first_name LIKE ? 
          OR last_name LIKE ? 
@@ -359,7 +359,7 @@ exports.fetchAdminById = async (req, res) => {
     const { id_number } = req.params;
 
     const [admin] = await pool.query(
-      "SELECT * FROM v_admin_details WHERE id_number = ?",
+      "SELECT * FROM view_admins WHERE id_number = ?",
       [id_number]
     );
 
