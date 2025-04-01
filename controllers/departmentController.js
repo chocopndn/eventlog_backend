@@ -13,7 +13,7 @@ exports.getDepartments = async (req, res) => {
     const searchQuery = req.query.search || "";
 
     const query = `
-        SELECT * FROM v_departments 
+        SELECT * FROM view_departments 
         WHERE department_name LIKE ? OR department_code LIKE ?
       `;
 
