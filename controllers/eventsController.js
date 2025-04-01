@@ -13,7 +13,7 @@ exports.userUpcomingEvents = async (req, res) => {
   }
 
   try {
-    let query = `SELECT * FROM v_user_upcoming_events WHERE JSON_CONTAINS(block_ids, CAST(? AS CHAR))`;
+    let query = `SELECT * FROM v_upcoming_events WHERE JSON_CONTAINS(block_ids, CAST(? AS CHAR))`;
     let queryParams = [block_id];
 
     query += ` ORDER BY JSON_UNQUOTE(JSON_EXTRACT(event_dates, "$[0]"));`;
@@ -579,7 +579,7 @@ exports.updateEventById = async (req, res) => {
 exports.getApprovedOngoingEvents = async (req, res) => {
   try {
     const [events] = await pool.query(
-      "SELECT * FROM v_user_upcoming_events ORDER BY event_dates ASC"
+      "SELECT * FROM view_upcoming_events ORDER BY event_dates ASC"
     );
 
     return res.json({ success: true, events: events });
