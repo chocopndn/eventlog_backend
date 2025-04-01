@@ -13,7 +13,7 @@ exports.getAllCourses = async (req, res) => {
     const searchQuery = req.query.search || "";
 
     const query = `
-      SELECT * FROM v_courses 
+      SELECT * FROM view_courses 
       WHERE course_name LIKE ? OR department_name LIKE ?
     `;
 
@@ -36,9 +36,10 @@ exports.deleteCourse = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [course] = await pool.query("SELECT * FROM courses WHERE id = ?", [
-      id,
-    ]);
+    const [course] = await pool.query(
+      "SELECT * FROM view_courses WHERE course_id = ?",
+      [id]
+    );
 
     if (!course.length) {
       return res
@@ -46,11 +47,13 @@ exports.deleteCourse = async (req, res) => {
         .json({ success: false, message: "Course not found" });
     }
 
-    await pool.query("DELETE FROM courses WHERE id = ?", [id]);
+    await pool.query("UPDATE courses SET status = 'deleted' WHERE id = ?", [
+      id,
+    ]);
 
     return res.status(200).json({
       success: true,
-      message: "Course deleted successfully",
+      message: "Course marked as deleted successfully",
     });
   } catch (error) {
     return handleError(res, error);
@@ -58,12 +61,12 @@ exports.deleteCourse = async (req, res) => {
 };
 
 exports.addCourse = async (req, res) => {
-  const { course_name, department_id } = req.body;
+  const { course_name, course_code, department_id } = req.body;
 
-  if (!course_name || !department_id) {
+  if (!course_name || !department_id || !course_code) {
     return res.status(400).json({
       success: false,
-      message: "Missing required fields: name and department_id",
+      message: "Missing required fields",
     });
   }
 
@@ -72,8 +75,8 @@ exports.addCourse = async (req, res) => {
     connection = await pool.getConnection();
 
     const [existingCourse] = await connection.query(
-      "SELECT * FROM courses WHERE LOWER(name) = ?",
-      [course_name.toLowerCase()]
+      "SELECT * FROM view_courses WHERE LOWER(course_name) = ? OR LOWER(course_code) = ?",
+      [course_name.toLowerCase(), course_code.toLowerCase()]
     );
 
     if (existingCourse.length > 0) {
@@ -85,17 +88,19 @@ exports.addCourse = async (req, res) => {
 
     const query = `
         INSERT INTO courses (
-          name, department_id
-        ) VALUES (?, ?)
+          name, code, department_id
+        ) VALUES (?, ?, ?)
       `;
 
-    await connection.query(query, [course_name, department_id]);
+    await connection.query(query, [course_name, course_code, department_id]);
 
     return res.status(201).json({
       success: true,
       message: "Course added successfully",
     });
   } catch (error) {
+    console.log(error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to add course",
@@ -108,7 +113,15 @@ exports.addCourse = async (req, res) => {
 
 exports.editCourse = async (req, res) => {
   const { id } = req.params;
-  const { name, department_id } = req.body;
+  const { name, department_id, status, course_code } = req.body;
+
+  if (!name || !department_id || !status || !course_code) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "All fields (name, department_id, status, course_code) are required",
+    });
+  }
 
   let connection;
   try {
@@ -126,34 +139,19 @@ exports.editCourse = async (req, res) => {
       });
     }
 
-    const updates = [];
-    const params = [];
-
-    if (name !== undefined) {
-      updates.push("name = ?");
-      params.push(name);
-    }
-    if (department_id !== undefined) {
-      updates.push("department_id = ?");
-      params.push(department_id);
-    }
-
-    if (updates.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No fields provided for update",
-      });
-    }
-
-    params.push(id);
-
     const query = `
         UPDATE courses 
-        SET ${updates.join(", ")} 
+        SET name = ?, department_id = ?, status = ?, code = ? 
         WHERE id = ?
       `;
 
-    await connection.query(query, params);
+    await connection.query(query, [
+      name,
+      department_id,
+      status,
+      course_code,
+      id,
+    ]);
 
     return res.status(200).json({
       success: true,
@@ -175,7 +173,7 @@ exports.fetchCourseById = async (req, res) => {
     const { id } = req.params;
 
     const [course] = await pool.query(
-      "SELECT * FROM v_courses WHERE course_id = ?",
+      "SELECT * FROM view_courses WHERE course_id = ?",
       [id]
     );
 
