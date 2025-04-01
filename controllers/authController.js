@@ -43,45 +43,42 @@ exports.signup = async (req, res) => {
     await connection.beginTransaction();
 
     const [userRecords] = await connection.query(
-      `SELECT * FROM v_users WHERE id_number = ? AND first_name = ? AND (middle_name IS NULL OR middle_name = ?) 
+      `SELECT * FROM view_users WHERE id_number = ? AND first_name = ? AND (middle_name IS NULL OR middle_name = ?) 
       AND last_name = ? AND (suffix IS NULL OR suffix = ?) AND department_id = ?`,
       [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
 
     if (!userRecords.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "User data does not match." });
-    }
-
-    if (userRecords[0].password_hash) {
       return res.status(400).json({
         success: false,
-        message: "User already has an account. Please log in.",
+        message: "User data does not match.",
       });
     }
 
-    const [emailRecords] = await connection.query(
-      `SELECT email FROM v_users WHERE LOWER(email) = LOWER(?) UNION SELECT email FROM v_admins WHERE LOWER(email) = LOWER(?)`,
-      [email, email]
-    );
+    const user = userRecords[0];
 
-    if (emailRecords.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email is already in use." });
+    if (user.status === "active") {
+      return res.status(400).json({
+        success: false,
+        message: "User already registered. Please log in.",
+      });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await connection.query(
-      "UPDATE users SET email = ?, password_hash = ? WHERE id_number = ?",
-      [email, hashedPassword, id_number]
-    );
-    await connection.commit();
+    if (user.status === "unregistered") {
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-    return res
-      .status(200)
-      .json({ success: true, message: "User account successfully created." });
+      await connection.query(
+        `UPDATE users SET email = ?, password_hash = ?, status = 'active' WHERE id_number = ?`,
+        [email, hashedPassword, id_number]
+      );
+
+      await connection.commit();
+
+      return res.status(200).json({
+        success: true,
+        message: "User account successfully registered.",
+      });
+    }
   } catch (error) {
     if (connection) await connection.rollback();
     return handleError(res, error);
