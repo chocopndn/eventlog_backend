@@ -175,7 +175,6 @@ exports.editUser = async (req, res) => {
   const { first_name, last_name, email, role_id, block_id, status, suffix } =
     req.body;
 
-  // Make sure that required fields are checked for emptiness
   if (
     !id_number ||
     !first_name ||
@@ -191,7 +190,6 @@ exports.editUser = async (req, res) => {
     });
   }
 
-  // If status is 'unregistered', email can be null
   const finalEmail = status === "unregistered" && !email ? null : email;
 
   let connection;
@@ -203,7 +201,7 @@ exports.editUser = async (req, res) => {
       [
         first_name,
         last_name,
-        finalEmail, // Use the finalEmail variable here
+        finalEmail,
         role_id,
         block_id,
         status,
