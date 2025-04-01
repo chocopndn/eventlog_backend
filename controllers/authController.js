@@ -172,10 +172,10 @@ exports.resetPassword = async (req, res) => {
   try {
     connection = await pool.getConnection();
     const [user, admin] = await Promise.all([
-      connection.query("SELECT id_number FROM v_users WHERE email = ?", [
+      connection.query("SELECT id_number FROM view_users WHERE email = ?", [
         email,
       ]),
-      connection.query("SELECT id_number FROM v_admins WHERE email = ?", [
+      connection.query("SELECT id_number FROM view_admins WHERE email = ?", [
         email,
       ]),
     ]);
