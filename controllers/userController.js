@@ -67,7 +67,7 @@ exports.getAllUsers = async (req, res) => {
   const offset = (page - 1) * limit;
 
   try {
-    let query = "SELECT * FROM v_users";
+    let query = "SELECT * FROM view_users";
     const queryParams = [];
 
     if (search) {
@@ -96,10 +96,10 @@ exports.getAllUsers = async (req, res) => {
     const countQuery = search
       ? `
         SELECT COUNT(*) AS total 
-        FROM v_users 
+        FROM view_users 
         WHERE id_number LIKE ? OR first_name LIKE ? OR middle_name LIKE ? OR last_name LIKE ? OR suffix LIKE ? OR email LIKE ? OR role_name LIKE ? OR block_name LIKE ? OR course_name LIKE ? OR department_code LIKE ? OR year_level_name LIKE ?
       `
-      : "SELECT COUNT(*) AS total FROM v_users";
+      : "SELECT COUNT(*) AS total FROM view_users";
     const countParams = search
       ? [
           `%${search}%`,
@@ -148,7 +148,7 @@ exports.getUserByID = async (req, res) => {
     connection = await pool.getConnection();
 
     const [user] = await connection.query(
-      "SELECT * FROM v_users WHERE id_number = ?",
+      "SELECT * FROM view_users WHERE id_number = ?",
       [id_number]
     );
 
