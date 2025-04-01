@@ -102,11 +102,12 @@ exports.login = async (req, res) => {
     connection = await pool.getConnection();
 
     const [userData] = await connection.query(
-      "SELECT * FROM v_users WHERE id_number = ?",
+      "SELECT id_number, password_hash FROM users WHERE id_number = ?",
       [id_number]
     );
+
     const [adminData] = await connection.query(
-      "SELECT * FROM v_admin_details WHERE id_number = ?",
+      "SELECT id_number, password_hash FROM admins WHERE id_number = ?",
       [id_number]
     );
 
@@ -119,16 +120,16 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (userData[0]) {
-      const isPasswordValid = await bcrypt.compare(
-        password,
-        account.password_hash
-      );
-      if (!isPasswordValid) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Invalid password." });
-      }
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      account.password_hash
+    );
+
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password.",
+      });
     }
 
     const token = jwt.sign(
@@ -136,13 +137,20 @@ exports.login = async (req, res) => {
       config.JWT_SECRET_KEY
     );
 
-    const { password_hash, ...userWithoutPasswordHash } = account;
+    let query = "";
+    if (userData[0]) {
+      query = "SELECT * FROM view_users WHERE id_number = ?";
+    } else if (adminData[0]) {
+      query = "SELECT * FROM view_admins WHERE id_number = ?";
+    }
+
+    const [userDetails] = await connection.query(query, [id_number]);
 
     return res.status(200).json({
       success: true,
       message: "Login successful.",
       token,
-      user: userWithoutPasswordHash,
+      user: userDetails[0],
     });
   } catch (error) {
     return handleError(res, error);
