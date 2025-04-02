@@ -102,12 +102,12 @@ exports.login = async (req, res) => {
     connection = await pool.getConnection();
 
     const [userData] = await connection.query(
-      "SELECT id_number, password_hash FROM users WHERE id_number = ?",
+      "SELECT id_number, password_hash, status FROM users WHERE id_number = ?",
       [id_number]
     );
 
     const [adminData] = await connection.query(
-      "SELECT id_number, password_hash FROM admins WHERE id_number = ?",
+      "SELECT id_number, password_hash, status FROM admins WHERE id_number = ?",
       [id_number]
     );
 
@@ -117,6 +117,14 @@ exports.login = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Account not found. Please sign up.",
+      });
+    }
+
+    if (account.status === "disabled") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your account has been disabled. Please contact the administrator.",
       });
     }
 
