@@ -13,7 +13,12 @@ exports.userUpcomingEvents = async (req, res) => {
   }
 
   try {
-    let query = `SELECT * FROM v_upcoming_events WHERE JSON_CONTAINS(block_ids, CAST(? AS CHAR))`;
+    let query = `
+      SELECT * 
+      FROM view_upcoming_events 
+      WHERE JSON_CONTAINS(block_ids, CAST(? AS CHAR)) 
+        AND status = 'approved'
+    `;
     let queryParams = [block_id];
 
     query += ` ORDER BY JSON_UNQUOTE(JSON_EXTRACT(event_dates, "$[0]"));`;
@@ -212,37 +217,34 @@ exports.addEvent = async (req, res) => {
     const [existingEvents] = await db.query(
       `
       SELECT 
-        e.id,
-        e.description,
-        ed.am_in,
-        ed.am_out,
-        ed.pm_in,
-        ed.pm_out,
-        ed.duration,
-        (
-          SELECT GROUP_CONCAT(block_id ORDER BY block_id)
-          FROM event_blocks 
-          WHERE event_id = e.id
-        ) AS block_ids
-      FROM events e
-      JOIN event_dates ed ON e.id = ed.event_id
-      WHERE e.event_name_id = ? 
-        AND e.venue = ? 
-        AND ed.event_date IN (?)
-    `,
-      [event_name_id, venue, date]
+        event_id,
+        event_name,
+        venue,
+        description,
+        event_dates,
+        block_ids,
+        scan_personnel,
+        status,
+        created_by_admin,
+        approved_by_admin,
+        am_in,
+        pm_out
+      FROM view_existing_events
+      WHERE event_name_id = ? 
+        AND venue = ? 
+        AND event_dates LIKE ?
+      `,
+      [event_name_id, venue, `%${date}%`]
     );
 
     if (existingEvents.length > 0) {
       for (const existing of existingEvents) {
-        const existingBlocks = existing.block_ids
-          ? existing.block_ids.split(",").map(Number)
-          : [];
+        const existingBlocks = JSON.parse(existing.block_ids || "[]");
         const newBlocks = [...new Set(block_ids)].sort((a, b) => a - b);
 
         console.debug("[Comparison]", {
           existing: {
-            id: existing.id,
+            id: existing.event_id,
             blocks: existingBlocks,
             times: `${existing.am_in}-${existing.pm_out}`,
           },
@@ -254,33 +256,36 @@ exports.addEvent = async (req, res) => {
 
         const isExactMatch =
           existing.description === description &&
-          existing.am_in === am_in &&
-          existing.am_out === am_out &&
-          existing.pm_in === pm_in &&
-          existing.pm_out === pm_out &&
-          existing.duration === duration &&
+          existing.scan_personnel === scan_personnel &&
           JSON.stringify(existingBlocks) === JSON.stringify(newBlocks);
 
-        if (isExactMatch) {
-          console.warn("[Duplicate] Exact match found for event:", existing.id);
+        const isDateMatch = existing.event_dates.includes(date);
+
+        if (isExactMatch && isDateMatch) {
+          console.warn(
+            "[Duplicate] Exact match found for event:",
+            existing.event_id
+          );
           await db.rollback();
           return res.status(400).json({
             message: "This event already exists with identical details.",
-            existing_event_id: existing.id,
+            existing_event_id: existing.event_id,
+          });
+        }
+
+        if (isDateMatch) {
+          console.warn(
+            "[Duplicate] Same event, same date found. Add blocks through the edit page.",
+            existing.event_id
+          );
+          await db.rollback();
+          return res.status(400).json({
+            message:
+              "Same event and date found, add blocks through the edit page.",
+            existing_event_id: existing.event_id,
           });
         }
       }
-
-      console.warn(
-        "[Duplicate] Partial match found. Existing events:",
-        existingEvents.map((e) => e.id)
-      );
-      await db.rollback();
-      return res.status(400).json({
-        message:
-          "An event with this name and venue already exists. Edit the existing event instead.",
-        existing_event_ids: existingEvents.map((e) => e.id),
-      });
     }
 
     const [eventResult] = await db.query(
