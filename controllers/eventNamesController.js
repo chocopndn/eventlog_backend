@@ -120,44 +120,59 @@ exports.getEventNameByID = async (req, res) => {
 
 exports.updateEventName = async (req, res) => {
   const { id } = req.params;
-  const { name } = req.body;
-  if (!name) {
+  const { name, status } = req.body;
+
+  if (!id || isNaN(id)) {
     return res.status(400).json({
       success: false,
-      message: "Event name is required.",
+      message: "Invalid event ID.",
     });
   }
+
+  if (!name || typeof name !== "string" || !name.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: "Event name must be a non-empty string.",
+    });
+  }
+
   let connection;
   try {
     connection = await pool.getConnection();
+
     const [existingEventName] = await connection.query(
-      "SELECT * FROM event_names WHERE id = ?",
+      "SELECT id, name, status FROM event_names WHERE id = ?",
       [id]
     );
+
     if (!existingEventName.length) {
       return res.status(404).json({
         success: false,
         message: "Event name not found.",
       });
     }
-    const [duplicateEventName] = await connection.query(
-      "SELECT * FROM event_names WHERE name = ? AND id != ?",
-      [name, id]
-    );
-    if (duplicateEventName.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "An event name with this name already exists.",
+
+    const currentData = existingEventName[0];
+
+    if (
+      currentData.name === name &&
+      (status === undefined || currentData.status === status)
+    ) {
+      return res.status(200).json({
+        success: true,
+        message: "No changes detected. Event name remains the same.",
       });
     }
-    await connection.query("UPDATE event_names SET name = ? WHERE id = ?", [
-      name,
-      id,
-    ]);
+
+    await connection.query(
+      "UPDATE event_names SET name = ?, status = COALESCE(?, status) WHERE id = ?",
+      [name, status, id]
+    );
+
     return res.status(200).json({
       success: true,
       message: "Event name updated successfully.",
-      data: { id, name },
+      data: { id, name, status: status ?? currentData.status },
     });
   } catch (error) {
     return handleError(res, error);
