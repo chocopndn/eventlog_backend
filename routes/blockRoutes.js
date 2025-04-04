@@ -8,5 +8,5 @@ router.route("/").post(blockController.addBlock);
 router.route("/:departmentId").get(blockController.getBlocksByDepartment);
 router.route("/block/:id").get(blockController.getBlockById);
 router.route("/block/:id").put(blockController.editBlock);
-router.route("/:id").delete(blockController.deleteBlock);
+router.route("/:id").put(blockController.disableBlock);
 module.exports = router;

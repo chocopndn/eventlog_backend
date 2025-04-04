@@ -103,19 +103,31 @@ exports.getBlockById = async (req, res) => {
 };
 
 exports.addBlock = async (req, res) => {
-  const { name, course_id, year_level_id, status = "active" } = req.body;
+  const { name, course_id, year_level_id, status = "Active" } = req.body;
 
   if (!name || !course_id || !year_level_id) {
-    return res.status(400).json({
-      success: false,
-      message: "Block name, course ID, and year level ID are required.",
-    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing required fields." });
   }
 
   try {
+    const [schoolYearSemester] = await pool.query(
+      "SELECT id FROM school_year_semesters WHERE status = 'Active' LIMIT 1"
+    );
+
+    if (!schoolYearSemester || !schoolYearSemester[0]) {
+      return res.status(400).json({
+        success: false,
+        message: "No active school year semester found.",
+      });
+    }
+
+    const school_year_semester_id = schoolYearSemester[0].id;
+
     const [result] = await pool.query(
-      "INSERT INTO blocks (name, course_id, year_level_id, status) VALUES (?, ?, ?, ?)",
-      [name, course_id, year_level_id, status]
+      "INSERT INTO blocks (name, course_id, year_level_id, status, school_year_semester_id) VALUES (?, ?, ?, ?, ?)",
+      [name, course_id, year_level_id, status, school_year_semester_id]
     );
 
     const [newBlock] = await pool.query(
@@ -129,11 +141,12 @@ exports.addBlock = async (req, res) => {
       message: "Block added successfully.",
     });
   } catch (error) {
+    console.log(error);
+
     if (error.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({
-        success: false,
-        message: "A block with this name already exists.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Block name already exists." });
     }
 
     res.status(500).json({
@@ -224,7 +237,7 @@ exports.editBlock = async (req, res) => {
   }
 };
 
-exports.deleteBlock = async (req, res) => {
+exports.disableBlock = async (req, res) => {
   const { id } = req.params;
 
   if (!id) {
@@ -236,7 +249,7 @@ exports.deleteBlock = async (req, res) => {
 
   try {
     const [result] = await pool.query(
-      "UPDATE blocks SET status = 'deleted' WHERE id = ?",
+      "UPDATE blocks SET status = 'Disabled' WHERE id = ?",
       [id]
     );
 

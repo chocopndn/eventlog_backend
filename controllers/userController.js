@@ -190,7 +190,7 @@ exports.editUser = async (req, res) => {
     });
   }
 
-  const finalEmail = status === "unregistered" && !email ? null : email;
+  const finalEmail = status === "Unregistered" && !email ? null : email;
 
   let connection;
   try {
@@ -236,7 +236,7 @@ exports.disableUser = async (req, res) => {
     connection = await pool.getConnection();
 
     const [result] = await connection.query(
-      "UPDATE users SET status = 'disabled' WHERE id_number = ?",
+      "UPDATE users SET status = 'Disabled' WHERE id_number = ?",
       [id_number]
     );
 
@@ -334,7 +334,7 @@ exports.addUser = async (req, res) => {
       INSERT INTO users (
         id_number, role_id, block_id, first_name, middle_name, 
         last_name, suffix, email, password_hash, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
     `;
 
     await connection.query(query, [
