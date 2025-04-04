@@ -60,7 +60,7 @@ exports.disableAdmin = async (req, res) => {
     }
 
     await pool.query(
-      "UPDATE admins SET status = 'disabled' WHERE id_number = ?",
+      "UPDATE admins SET status = 'Disabled' WHERE id_number = ?",
       [id_number]
     );
 
@@ -76,7 +76,6 @@ exports.disableAdmin = async (req, res) => {
 exports.addAdmin = async (req, res) => {
   const {
     id_number,
-    department_id,
     first_name,
     middle_name,
     last_name,
@@ -85,7 +84,7 @@ exports.addAdmin = async (req, res) => {
     role_id,
   } = req.body;
 
-  if (!id_number || !department_id || !first_name || !last_name) {
+  if (!id_number || !first_name || !last_name) {
     return res.status(400).json({
       success: false,
       message: "Missing required fields",
@@ -132,17 +131,6 @@ exports.addAdmin = async (req, res) => {
       }
     }
 
-    const [department] = await connection.query(
-      "SELECT * FROM departments WHERE id = ?",
-      [department_id]
-    );
-    if (!department.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid department_id",
-      });
-    }
-
     const generatedPassword = crypto.randomBytes(6).toString("hex");
 
     const saltRounds = 10;
@@ -150,15 +138,14 @@ exports.addAdmin = async (req, res) => {
 
     const query = `
       INSERT INTO admins (
-        id_number, role_id, department_id, first_name, middle_name, 
+        id_number, role_id, first_name, middle_name, 
         last_name, suffix, email, password_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await connection.query(query, [
       id_number,
       selectedRoleId,
-      department_id,
       first_name,
       middle_name || null,
       last_name,
@@ -212,7 +199,7 @@ const sendCredentials = async (email, id_number, password) => {
 };
 
 exports.editAdmin = async (req, res) => {
-  const { id_number } = req.params; // Current ID number of the admin
+  const { id_number } = req.params;
   const {
     new_id_number,
     department_id,
@@ -228,10 +215,8 @@ exports.editAdmin = async (req, res) => {
   try {
     connection = await pool.getConnection();
 
-    // Start transaction to ensure atomicity
     await connection.beginTransaction();
 
-    // Check if the admin exists
     const [existingAdmin] = await connection.query(
       "SELECT * FROM admins WHERE id_number = ?",
       [id_number]
@@ -242,23 +227,19 @@ exports.editAdmin = async (req, res) => {
         .json({ success: false, message: "Admin not found" });
     }
 
-    // Validate new_id_number if provided
     if (new_id_number !== undefined) {
       const [existingIdNumber] = await connection.query(
         "SELECT * FROM admins WHERE id_number = ? AND id_number != ?",
         [new_id_number, id_number]
       );
       if (existingIdNumber.length > 0) {
-        return res
-          .status(409)
-          .json({
-            success: false,
-            message: "An admin with this ID number already exists",
-          });
+        return res.status(409).json({
+          success: false,
+          message: "An admin with this ID number already exists",
+        });
       }
     }
 
-    // Update foreign key references in the events table
     if (new_id_number !== undefined) {
       await connection.query(
         "UPDATE events SET approved_by = ? WHERE approved_by = ?",
@@ -266,7 +247,6 @@ exports.editAdmin = async (req, res) => {
       );
     }
 
-    // Build the update query for admins table
     const updates = [];
     const params = [];
 
@@ -309,7 +289,7 @@ exports.editAdmin = async (req, res) => {
         .json({ success: false, message: "No fields provided for update" });
     }
 
-    params.push(id_number); // Add the current ID number for the WHERE clause
+    params.push(id_number);
 
     const query = `
       UPDATE admins 
@@ -319,22 +299,18 @@ exports.editAdmin = async (req, res) => {
 
     await connection.query(query, params);
 
-    // Commit the transaction
     await connection.commit();
 
     return res
       .status(200)
       .json({ success: true, message: "Admin updated successfully" });
   } catch (error) {
-    // Rollback the transaction in case of an error
     if (connection) await connection.rollback();
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Failed to update admin",
-        error: error.message,
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update admin",
+      error: error.message,
+    });
   } finally {
     if (connection) connection.release();
   }
