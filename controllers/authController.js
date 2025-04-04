@@ -57,7 +57,7 @@ exports.signup = async (req, res) => {
 
     const user = userRecords[0];
 
-    if (user.status === "active") {
+    if (user.status === "Active") {
       return res.status(400).json({
         success: false,
         message: "User already registered. Please log in.",
@@ -68,7 +68,7 @@ exports.signup = async (req, res) => {
       const hashedPassword = await bcrypt.hash(password, 10);
 
       await connection.query(
-        `UPDATE users SET email = ?, password_hash = ?, status = 'active' WHERE id_number = ?`,
+        `UPDATE users SET email = ?, password_hash = ?, status = 'Active' WHERE id_number = ?`,
         [email, hashedPassword, id_number]
       );
 
@@ -120,7 +120,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (account.status === "disabled") {
+    if (account.status === "Disabled") {
       return res.status(403).json({
         success: false,
         message:
