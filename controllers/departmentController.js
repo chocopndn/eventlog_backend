@@ -106,7 +106,7 @@ exports.updateDepartment = async (req, res) => {
   }
 };
 
-exports.deleteDepartment = async (req, res) => {
+exports.disableDepartment = async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -122,13 +122,13 @@ exports.deleteDepartment = async (req, res) => {
     }
 
     await pool.query("UPDATE departments SET status = ? WHERE id = ?", [
-      "deleted",
+      "Disabled",
       id,
     ]);
 
     return res.status(200).json({
       success: true,
-      message: "Department soft-deleted successfully",
+      message: "Department Disabled successfully",
     });
   } catch (error) {
     console.log(error);
