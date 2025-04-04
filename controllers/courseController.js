@@ -32,7 +32,7 @@ exports.getAllCourses = async (req, res) => {
   }
 };
 
-exports.deleteCourse = async (req, res) => {
+exports.disableCourse = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -47,7 +47,7 @@ exports.deleteCourse = async (req, res) => {
         .json({ success: false, message: "Course not found" });
     }
 
-    await pool.query("UPDATE courses SET status = 'deleted' WHERE id = ?", [
+    await pool.query("UPDATE courses SET status = 'Disabled' WHERE id = ?", [
       id,
     ]);
 
