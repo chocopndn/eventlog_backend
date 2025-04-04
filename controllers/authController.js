@@ -64,7 +64,7 @@ exports.signup = async (req, res) => {
       });
     }
 
-    if (user.status === "unregistered") {
+    if (user.status === "Unregistered") {
       const hashedPassword = await bcrypt.hash(password, 10);
 
       await connection.query(
