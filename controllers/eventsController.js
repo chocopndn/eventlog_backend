@@ -229,7 +229,7 @@ exports.addEvent = async (req, res) => {
         approved_by_admin,
         am_in,
         pm_out
-      FROM view_existing_events
+      FROM view_events
       WHERE event_name_id = ? 
         AND venue = ? 
         AND event_dates LIKE ?
@@ -381,7 +381,7 @@ exports.editEvent = async (req, res) => {
 exports.getAllEventNames = async (req, res) => {
   try {
     const [eventNames] = await pool.query(
-      "SELECT id, name FROM event_names ORDER BY name ASC"
+      "SELECT id, name, status FROM event_names ORDER BY name ASC"
     );
 
     return res.json({ success: true, eventNames });
@@ -460,7 +460,7 @@ exports.getEventById = async (req, res) => {
 
   try {
     const [events] = await pool.query(
-      `SELECT * FROM v_editable_events WHERE event_id = ?`,
+      `SELECT * FROM view_events WHERE event_id = ?`,
       [id]
     );
 
@@ -593,5 +593,90 @@ exports.getApprovedOngoingEvents = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch events." });
+  }
+};
+
+exports.getAllEvents = async (req, res) => {
+  try {
+    const [events] = await pool.query("SELECT * FROM view_events");
+
+    if (!events.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No events found" });
+    }
+
+    return res.status(200).json({ success: true, events });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+exports.deleteEventById = async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Event ID is required" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `UPDATE events SET status = 'deleted' WHERE id = ?`,
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Event not found" });
+    }
+
+    return res.json({
+      success: true,
+      message: "Event soft deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error soft deleting event:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to soft delete event" });
+  }
+};
+
+exports.approveEventById = async (req, res) => {
+  const { id } = req.params;
+  const { admin_id_number } = req.body;
+
+  if (!id || !admin_id_number) {
+    return res.status(400).json({
+      success: false,
+      message: "Event ID and Admin ID are required",
+    });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `UPDATE events SET status = 'approved', approved_by = ? WHERE id = ?`,
+      [admin_id_number, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Event approved successfully",
+    });
+  } catch (error) {
+    console.error("Error approving event:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to approve event",
+    });
   }
 };

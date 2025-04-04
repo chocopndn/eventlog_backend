@@ -212,11 +212,11 @@ const sendCredentials = async (email, id_number, password) => {
 };
 
 exports.editAdmin = async (req, res) => {
-  const { id_number } = req.params;
+  const { id_number } = req.params; // Current ID number of the admin
   const {
+    new_id_number,
     department_id,
     first_name,
-    middle_name,
     last_name,
     suffix,
     email,
@@ -228,67 +228,52 @@ exports.editAdmin = async (req, res) => {
   try {
     connection = await pool.getConnection();
 
+    // Start transaction to ensure atomicity
+    await connection.beginTransaction();
+
+    // Check if the admin exists
     const [existingAdmin] = await connection.query(
       "SELECT * FROM admins WHERE id_number = ?",
       [id_number]
     );
-
     if (!existingAdmin.length) {
-      return res.status(404).json({
-        success: false,
-        message: "Admin not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin not found" });
     }
 
-    if (role_id !== undefined) {
-      const validRoles = [3, 4];
-      if (!validRoles.includes(role_id)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid role_id. Must be 3 (Admin) or 4 (Super Admin)",
-        });
-      }
-    }
-
-    if (department_id !== undefined) {
-      const [department] = await connection.query(
-        "SELECT * FROM departments WHERE id = ?",
-        [department_id]
+    // Validate new_id_number if provided
+    if (new_id_number !== undefined) {
+      const [existingIdNumber] = await connection.query(
+        "SELECT * FROM admins WHERE id_number = ? AND id_number != ?",
+        [new_id_number, id_number]
       );
-      if (!department.length) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid department_id",
-        });
+      if (existingIdNumber.length > 0) {
+        return res
+          .status(409)
+          .json({
+            success: false,
+            message: "An admin with this ID number already exists",
+          });
       }
     }
 
-    if (email !== undefined) {
-      const [existingEmail] = await connection.query(
-        "SELECT * FROM admins WHERE email = ? AND id_number != ?",
-        [email, id_number]
+    // Update foreign key references in the events table
+    if (new_id_number !== undefined) {
+      await connection.query(
+        "UPDATE events SET approved_by = ? WHERE approved_by = ?",
+        [new_id_number, id_number]
       );
-      if (existingEmail.length > 0) {
-        return res.status(409).json({
-          success: false,
-          message: "An admin with this email already exists",
-        });
-      }
     }
 
-    if (status !== undefined) {
-      const validStatuses = ["active", "pending", "disabled"];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid status. Must be 'active', 'pending', or 'disabled'",
-        });
-      }
-    }
-
+    // Build the update query for admins table
     const updates = [];
     const params = [];
 
+    if (new_id_number !== undefined) {
+      updates.push("id_number = ?");
+      params.push(new_id_number);
+    }
     if (department_id !== undefined) {
       updates.push("department_id = ?");
       params.push(department_id);
@@ -296,10 +281,6 @@ exports.editAdmin = async (req, res) => {
     if (first_name !== undefined) {
       updates.push("first_name = ?");
       params.push(first_name);
-    }
-    if (middle_name !== undefined) {
-      updates.push("middle_name = ?");
-      params.push(middle_name || null);
     }
     if (last_name !== undefined) {
       updates.push("last_name = ?");
@@ -323,13 +304,12 @@ exports.editAdmin = async (req, res) => {
     }
 
     if (updates.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No fields provided for update",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "No fields provided for update" });
     }
 
-    params.push(id_number);
+    params.push(id_number); // Add the current ID number for the WHERE clause
 
     const query = `
       UPDATE admins 
@@ -339,16 +319,22 @@ exports.editAdmin = async (req, res) => {
 
     await connection.query(query, params);
 
-    return res.status(200).json({
-      success: true,
-      message: "Admin updated successfully",
-    });
+    // Commit the transaction
+    await connection.commit();
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Admin updated successfully" });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update admin",
-      error: error.message,
-    });
+    // Rollback the transaction in case of an error
+    if (connection) await connection.rollback();
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to update admin",
+        error: error.message,
+      });
   } finally {
     if (connection) connection.release();
   }
