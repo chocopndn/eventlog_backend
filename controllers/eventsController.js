@@ -186,7 +186,7 @@ exports.addEvent = async (req, res) => {
   const {
     event_name_id,
     venue,
-    date,
+    dates: event_dates,
     description,
     block_ids,
     am_in,
@@ -194,110 +194,116 @@ exports.addEvent = async (req, res) => {
     pm_in,
     pm_out,
     duration,
-    scan_personnel,
-    admin_id_number,
+    admin_id_number: created_by,
   } = req.body;
 
-  if (!event_name_id || !venue || !date?.length || !block_ids?.length) {
-    console.error("[Validation] Missing required fields:", {
-      missing: {
-        event_name_id: !event_name_id,
-        venue: !venue,
-        date: !date?.length,
-        blocks: !block_ids?.length,
-      },
-    });
-    return res.status(400).json({ message: "Missing required fields" });
+  console.log("triggered");
+
+  if (
+    !event_name_id ||
+    !venue ||
+    !Array.isArray(event_dates) ||
+    event_dates.length === 0 ||
+    !Array.isArray(block_ids) ||
+    block_ids.length === 0 ||
+    !created_by
+  ) {
+    return res
+      .status(400)
+      .json({ message: "Missing or invalid required fields." });
   }
 
   const db = await pool.getConnection();
   try {
     await db.beginTransaction();
 
-    const [existingEvents] = await db.query(
-      `
-      SELECT 
-        event_id,
-        event_name,
-        venue,
-        description,
-        event_dates,
-        block_ids,
-        scan_personnel,
-        status,
-        created_by_admin,
-        approved_by_admin,
-        am_in,
-        pm_out
-      FROM view_events
-      WHERE event_name_id = ? 
-        AND venue = ? 
-        AND event_dates LIKE ?
-      `,
-      [event_name_id, venue, `%${date}%`]
+    const [schoolYearSemester] = await db.query(
+      `SELECT id FROM school_year_semesters WHERE status = 'Active' LIMIT 1`
     );
 
-    if (existingEvents.length > 0) {
-      for (const existing of existingEvents) {
-        const existingBlocks = JSON.parse(existing.block_ids || "[]");
-        const newBlocks = [...new Set(block_ids)].sort((a, b) => a - b);
+    if (!schoolYearSemester || schoolYearSemester.length === 0) {
+      await db.rollback();
+      return res
+        .status(400)
+        .json({ message: "No active school year semester found." });
+    }
+    const school_year_semester_id = schoolYearSemester[0].id;
 
-        console.debug("[Comparison]", {
-          existing: {
-            id: existing.event_id,
-            blocks: existingBlocks,
-            times: `${existing.am_in}-${existing.pm_out}`,
-          },
-          new: {
-            blocks: newBlocks,
-            times: `${am_in}-${pm_out}`,
-          },
+    const [existingEventName] = await db.query(
+      `SELECT id FROM event_names WHERE id = ?`,
+      [event_name_id]
+    );
+
+    if (!existingEventName || existingEventName.length === 0) {
+      await db.rollback();
+      return res.status(400).json({ message: "Invalid event name ID." });
+    }
+
+    const [existingAdmin] = await db.query(
+      `SELECT id_number FROM admins WHERE id_number = ?`,
+      [created_by]
+    );
+
+    if (!existingAdmin || existingAdmin.length === 0) {
+      await db.rollback();
+      return res.status(400).json({ message: "Invalid admin ID." });
+    }
+
+    const uniqueDates = [...new Set(event_dates)].sort();
+    const uniqueBlocks = [...new Set(block_ids)].map(String).sort();
+
+    const [existingEventView] = await db.query(
+      `SELECT event_name_id, venue, event_dates, block_ids_list
+       FROM view_existing_events
+       WHERE event_name_id = ?
+         AND venue = ?
+         AND event_status = 'Pending'`,
+      [event_name_id, venue]
+    );
+
+    if (existingEventView && existingEventView.length > 0) {
+      const isDuplicate = existingEventView.some((existing) => {
+        const existingDates = existing.event_dates
+          ? existing.event_dates.split(",").sort()
+          : [];
+        const existingBlocks = existing.block_ids_list
+          ? existing.block_ids_list.split(",").sort()
+          : [];
+
+        const currentDatesMatch =
+          JSON.stringify(uniqueDates) === JSON.stringify(existingDates);
+        const currentBlocksMatch =
+          JSON.stringify(uniqueBlocks) === JSON.stringify(existingBlocks);
+
+        return currentDatesMatch && currentBlocksMatch;
+      });
+
+      if (isDuplicate) {
+        await db.rollback();
+        return res.status(409).json({
+          message: "Event with the exact same details already exists.",
         });
-
-        const isExactMatch =
-          existing.description === description &&
-          existing.scan_personnel === scan_personnel &&
-          JSON.stringify(existingBlocks) === JSON.stringify(newBlocks);
-
-        const isDateMatch = existing.event_dates.includes(date);
-
-        if (isExactMatch && isDateMatch) {
-          console.warn(
-            "[Duplicate] Exact match found for event:",
-            existing.event_id
-          );
-          await db.rollback();
-          return res.status(400).json({
-            message: "This event already exists with identical details.",
-            existing_event_id: existing.event_id,
-          });
-        }
-
-        if (isDateMatch) {
-          console.warn(
-            "[Duplicate] Same event, same date found. Add blocks through the edit page.",
-            existing.event_id
-          );
-          await db.rollback();
-          return res.status(400).json({
-            message:
-              "Same event and date found, add blocks through the edit page.",
-            existing_event_id: existing.event_id,
-          });
-        }
       }
     }
 
     const [eventResult] = await db.query(
-      `INSERT INTO events 
-       (event_name_id, venue, description, scan_personnel, created_by, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [event_name_id, venue, description, scan_personnel, admin_id_number]
+      `INSERT INTO events
+        (event_name_id, school_year_semester_id, venue, description, scan_personnel, created_by, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
+      [
+        event_name_id,
+        school_year_semester_id,
+        venue,
+        description,
+        "Year Level Representatives, Governor, or Year Level Advisers",
+        created_by,
+      ]
     );
+    const eventId = eventResult.insertId;
 
-    const dateValues = date.map((d) => [
-      eventResult.insertId,
-      d,
+    const dateValues = uniqueDates.map((event_date) => [
+      eventId,
+      event_date,
       am_in,
       am_out,
       pm_in,
@@ -306,15 +312,13 @@ exports.addEvent = async (req, res) => {
     ]);
 
     await db.query(
-      `INSERT INTO event_dates 
-       (event_id, event_date, am_in, am_out, pm_in, pm_out, duration)
-       VALUES ?`,
+      `INSERT INTO event_dates
+        (event_id, event_date, am_in, am_out, pm_in, pm_out, duration)
+        VALUES ?`,
       [dateValues]
     );
 
-    const uniqueBlocks = [...new Set(block_ids)];
-
-    const blockValues = uniqueBlocks.map((b) => [eventResult.insertId, b]);
+    const blockValues = uniqueBlocks.map((block_id) => [eventId, block_id]);
     await db.query(`INSERT INTO event_blocks (event_id, block_id) VALUES ?`, [
       blockValues,
     ]);
@@ -324,17 +328,14 @@ exports.addEvent = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Event created successfully",
-      event_id: eventResult.insertId,
+      event_id: eventId,
     });
   } catch (error) {
-    console.error("[Error] Event creation failed:", {
-      error: error.message,
-      stack: error.stack,
-    });
+    console.error("Error adding event:", error);
+
     await db.rollback();
     return res.status(500).json({
       message: "Failed to create event",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   } finally {
     db.release();
