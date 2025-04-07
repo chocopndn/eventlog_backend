@@ -165,7 +165,7 @@ exports.updateEventName = async (req, res) => {
     }
 
     await connection.query(
-      "UPDATE event_names SET name = ?, status = COALESCE(?, status) WHERE id = ?",
+      "UPDATE event_names SET name = ?, status = ? WHERE id = ?",
       [name, status, id]
     );
 
@@ -181,7 +181,7 @@ exports.updateEventName = async (req, res) => {
   }
 };
 
-exports.deleteEventName = async (req, res) => {
+exports.disableEventName = async (req, res) => {
   const { id } = req.params;
   let connection;
   try {
@@ -197,7 +197,7 @@ exports.deleteEventName = async (req, res) => {
       });
     }
     await connection.query(
-      "UPDATE event_names SET status = 'deleted' WHERE id = ?",
+      "UPDATE event_names SET status = 'Disabled' WHERE id = ?",
       [id]
     );
     return res.status(200).json({
