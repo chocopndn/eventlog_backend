@@ -274,8 +274,6 @@ exports.addEvent = async (req, res) => {
     admin_id_number: created_by,
   } = req.body;
 
-  console.log("triggered");
-
   if (
     !event_name_id ||
     !venue ||
@@ -616,25 +614,23 @@ exports.getEditableEvents = async (req, res) => {
 
     const [events] = await db.query(
       `
-      SELECT * FROM v_editable_events
+      SELECT * FROM view_editable_events
       WHERE event_name LIKE ? OR venue LIKE ?
-      ORDER BY status, all_dates
+      ORDER BY status, event_dates
       `,
       [`%${searchQuery}%`, `%${searchQuery}%`]
     );
 
     const simpleEvents = events.map((event) => {
-      let blockIds = [];
-      if (event.block_ids) {
-        try {
-          blockIds = JSON.parse(event.block_ids.replace(/[\n\r\s]+/g, ""));
-        } catch (e) {
-          console.log("Couldn't parse block IDs:", event.block_ids);
-        }
-      }
-
-      const blockNames = event.block_names ? event.block_names.split(", ") : [];
-      const dates = event.all_dates ? event.all_dates.split(", ") : [];
+      const blockIds = event.block_ids
+        ? event.block_ids.split(",").map((id) => id.trim())
+        : [];
+      const blockNames = event.block_names
+        ? event.block_names.split(",").map((name) => name.trim())
+        : [];
+      const dates = event.event_dates
+        ? event.event_dates.split(",").map((date) => date.trim())
+        : [];
 
       return {
         id: event.event_id,
@@ -663,7 +659,7 @@ exports.getEditableEvents = async (req, res) => {
 
     db.release();
   } catch (error) {
-    console.log("Error getting events:", error);
+    console.error("Error getting events:", error);
     res.status(500).json({
       success: false,
       message: "Failed to get events",
@@ -710,8 +706,6 @@ exports.updateEventById = async (req, res) => {
     duration,
     admin_id_number: updated_by,
   } = req.body;
-
-  console.log(req.body);
 
   if (
     !event_id ||
@@ -887,7 +881,7 @@ exports.getAllEvents = async (req, res) => {
   }
 };
 
-exports.deleteEventById = async (req, res) => {
+exports.deleteEvent = async (req, res) => {
   const { id } = req.params;
   if (!id) {
     return res

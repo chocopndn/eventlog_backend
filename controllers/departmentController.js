@@ -131,7 +131,6 @@ exports.disableDepartment = async (req, res) => {
       message: "Department Disabled successfully",
     });
   } catch (error) {
-    console.log(error);
     return handleError(res, error);
   }
 };
