@@ -43,8 +43,9 @@ exports.signup = async (req, res) => {
     await connection.beginTransaction();
 
     const [userRecords] = await connection.query(
-      `SELECT * FROM view_users WHERE id_number = ? AND first_name = ? AND (middle_name IS NULL OR middle_name = ?) 
-      AND last_name = ? AND (suffix IS NULL OR suffix = ?) AND department_id = ?`,
+      `SELECT * FROM view_users 
+       WHERE id_number = ? AND first_name = ? AND (middle_name IS NULL OR middle_name = ?) 
+       AND last_name = ? AND (suffix IS NULL OR suffix = ?) AND department_id = ?`,
       [id_number, first_name, middle_name, last_name, suffix, department_id]
     );
 
@@ -61,6 +62,13 @@ exports.signup = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "User already registered. Please log in.",
+      });
+    }
+
+    if (user.status === "Disabled") {
+      return res.status(403).json({
+        success: false,
+        message: "Account is disabled. Please contact the administrator.",
       });
     }
 
