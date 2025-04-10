@@ -37,54 +37,61 @@ exports.syncAttendance = async (req, res) => {
         }
 
         const numericEventDateId = parseInt(event_date_id);
-        const numericStudentId = parseInt(student_id_number);
+        const numericStudentId = student_id_number;
 
-        if (isNaN(numericEventDateId) || isNaN(numericStudentId)) {
+        if (isNaN(numericEventDateId)) {
           failedRecords.push({
             record,
-            error: "Invalid event_date_id or student_id_number.",
+            error: "Invalid event_date_id.",
           });
           continue;
         }
 
-        const columns = ["event_date_id", "student_id_number"];
-        const values = [numericEventDateId, numericStudentId];
-        const updates = [];
-
-        if (am_in !== undefined && am_in !== null) {
-          columns.push("am_in");
-          values.push(true);
-          updates.push(`am_in = VALUES(am_in)`);
-        }
-        if (am_out !== undefined && am_out !== null) {
-          columns.push("am_out");
-          values.push(true);
-          updates.push(`am_out = VALUES(am_out)`);
-        }
-        if (pm_in !== undefined && pm_in !== null) {
-          columns.push("pm_in");
-          values.push(true);
-          updates.push(`pm_in = VALUES(pm_in)`);
-        }
-        if (pm_out !== undefined && pm_out !== null) {
-          columns.push("pm_out");
-          values.push(true);
-          updates.push(`pm_out = VALUES(pm_out)`);
-        }
-
-        const insertQuery = `
-          INSERT INTO attendance (${columns.join(", ")})
-          VALUES (${values.map(() => "?").join(", ")})
-          ON DUPLICATE KEY UPDATE ${updates.join(", ")}
+        const selectQuery = `
+          SELECT id FROM attendance
+          WHERE event_date_id = ? AND student_id_number = ?
         `;
+        const [rows] = await connection.query(selectQuery, [
+          numericEventDateId,
+          numericStudentId,
+        ]);
 
-        try {
-          await connection.query(insertQuery, values);
-          syncedRecords.push({ event_date_id, student_id_number });
-        } catch (dbError) {
-          failedRecords.push({
-            record,
-            error: "Database error while syncing attendance.",
+        if (rows.length > 0) {
+          const updateQuery = `
+            UPDATE attendance
+            SET am_in = ?, am_out = ?, pm_in = ?, pm_out = ?
+            WHERE event_date_id = ? AND student_id_number = ?
+          `;
+          await connection.query(updateQuery, [
+            am_in || false,
+            am_out || false,
+            pm_in || false,
+            pm_out || false,
+            numericEventDateId,
+            numericStudentId,
+          ]);
+          syncedRecords.push({
+            id: rows[0].id,
+            event_date_id,
+            student_id_number,
+          });
+        } else {
+          const insertQuery = `
+            INSERT INTO attendance (event_date_id, student_id_number, am_in, am_out, pm_in, pm_out)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `;
+          const [result] = await connection.query(insertQuery, [
+            numericEventDateId,
+            numericStudentId,
+            am_in || false,
+            am_out || false,
+            pm_in || false,
+            pm_out || false,
+          ]);
+          syncedRecords.push({
+            id: result.insertId,
+            event_date_id,
+            student_id_number,
           });
         }
       }
