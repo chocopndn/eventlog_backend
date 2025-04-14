@@ -1,5 +1,6 @@
 const { pool } = require("../config/db");
 const config = require("../config/config");
+const moment = require("moment");
 
 exports.syncAttendance = async (req, res) => {
   try {
@@ -131,6 +132,8 @@ exports.fetchUserOngoingEvents = async (req, res) => {
     const connection = await pool.getConnection();
 
     try {
+      const today = moment().format("YYYY-MM-DD");
+
       const userQuery = `
         SELECT block_id 
         FROM users 
@@ -177,8 +180,16 @@ exports.fetchUserOngoingEvents = async (req, res) => {
 
       const [rows] = await connection.query(paginatedQuery, queryParams);
 
+      const filteredRows = rows.filter((row) => {
+        const eventDates = row.event_dates.split(",");
+        const firstDate = eventDates[0];
+        const lastDate = eventDates[eventDates.length - 1];
+
+        return today >= firstDate && today <= lastDate;
+      });
+
       const formattedRows = await Promise.all(
-        rows.map(async (row) => {
+        filteredRows.map(async (row) => {
           const eventDates = row.event_dates.split(",");
           const eventDateIds = row.event_date_ids.split(",").map(Number);
 
@@ -401,6 +412,143 @@ exports.fetchUserPastEvents = async (req, res) => {
     } catch (dbError) {
       return res.status(500).json({
         message: "Database error while fetching user events.",
+      });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    return res.status(500).json({
+      message: "An error occurred while processing the request.",
+    });
+  }
+};
+
+exports.fetchAllPastEvents = async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.body;
+
+    const connection = await pool.getConnection();
+
+    try {
+      const offset = (page - 1) * limit;
+
+      const baseQuery = `
+        SELECT 
+          event_id,
+          event_name,
+          event_dates
+        FROM 
+          view_events
+        WHERE 
+          status = 'Archived'
+        ORDER BY 
+          SUBSTRING_INDEX(event_dates, ',', 1) ASC
+      `;
+
+      const paginatedQuery = `${baseQuery} LIMIT ? OFFSET ?`;
+      const [rows] = await connection.query(paginatedQuery, [limit, offset]);
+
+      const countQuery = `
+        SELECT COUNT(*) AS total
+        FROM view_events
+        WHERE status = 'Archived'
+      `;
+      const [countRows] = await connection.query(countQuery);
+      const totalRecords = countRows[0].total;
+
+      return res.status(200).json({
+        success: true,
+        message: "All past events fetched successfully.",
+        pagination: {
+          page,
+          limit,
+          totalRecords,
+          totalPages: Math.ceil(totalRecords / limit),
+        },
+        events: rows,
+      });
+    } catch (dbError) {
+      return res.status(500).json({
+        message: "Database error while fetching all past events.",
+      });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    return res.status(500).json({
+      message: "An error occurred while processing the request.",
+    });
+  }
+};
+
+exports.fetchAllOngoingEvents = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = "" } = req.body;
+
+    const connection = await pool.getConnection();
+
+    try {
+      const offset = (page - 1) * limit;
+
+      let baseQuery = `
+        SELECT 
+          event_id,
+          event_name,
+          event_dates
+        FROM 
+          view_events
+        WHERE 
+          status = 'Approved'
+      `;
+
+      if (search.trim() !== "") {
+        baseQuery += ` AND event_name LIKE ?`;
+      }
+
+      baseQuery += ` ORDER BY SUBSTRING_INDEX(event_dates, ',', 1) ASC`;
+
+      const paginatedQuery = `${baseQuery} LIMIT ? OFFSET ?`;
+
+      const queryParams = [];
+      if (search.trim() !== "") {
+        queryParams.push(`%${search}%`);
+      }
+      queryParams.push(limit, offset);
+
+      const [rows] = await connection.query(paginatedQuery, queryParams);
+
+      let countQuery = `
+        SELECT COUNT(*) AS total
+        FROM view_events
+        WHERE status = 'Approved'
+      `;
+
+      if (search.trim() !== "") {
+        countQuery += ` AND event_name LIKE ?`;
+      }
+
+      const countParams = [];
+      if (search.trim() !== "") {
+        countParams.push(`%${search}%`);
+      }
+
+      const [countRows] = await connection.query(countQuery, countParams);
+      const totalRecords = countRows[0].total;
+
+      return res.status(200).json({
+        success: true,
+        message: "All ongoing events fetched successfully.",
+        pagination: {
+          page,
+          limit,
+          totalRecords,
+          totalPages: Math.ceil(totalRecords / limit),
+        },
+        events: rows,
+      });
+    } catch (dbError) {
+      return res.status(500).json({
+        message: "Database error while fetching all ongoing events.",
       });
     } finally {
       connection.release();

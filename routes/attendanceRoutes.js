@@ -11,4 +11,11 @@ router
   .route("/user/past/events")
   .post(attendanceController.fetchUserPastEvents);
 
+router
+  .route("/admin/ongoing/events")
+  .post(attendanceController.fetchAllOngoingEvents);
+router
+  .route("/admin/past/events")
+  .post(attendanceController.fetchAllPastEvents);
+
 module.exports = router;
