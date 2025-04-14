@@ -1,5 +1,7 @@
 const { pool } = require("../config/db");
 const bcrypt = require("bcrypt");
+const nodemailer = require("nodemailer");
+const config = require("../config/config");
 
 const handleError = (res, error, defaultMessage = "Internal server error") => {
   console.error(error);
