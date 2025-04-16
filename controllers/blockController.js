@@ -103,20 +103,53 @@ exports.getBlockById = async (req, res) => {
 };
 
 exports.addBlock = async (req, res) => {
-  const { name, course_id, year_level_id, status = "Active" } = req.body;
+  const {
+    name,
+    course_id,
+    year_level_id,
+    department_id,
+    status = "Active",
+  } = req.body;
 
-  if (!name || !course_id || !year_level_id) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Missing required fields." });
+  if (!name || !course_id || !year_level_id || !department_id) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "Missing required fields: name, course_id, year_level_id, and department_id are mandatory.",
+    });
   }
 
   try {
+    const [department] = await pool.query(
+      "SELECT id FROM departments WHERE id = ? AND status = 'Active'",
+      [department_id]
+    );
+
+    if (!department || department.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid department_id. Department not found or is disabled.",
+      });
+    }
+
+    const [course] = await pool.query(
+      "SELECT id FROM courses WHERE id = ? AND department_id = ? AND status = 'Active'",
+      [course_id, department_id]
+    );
+
+    if (!course || course.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid course_id. Course not found, disabled, or does not belong to the specified department.",
+      });
+    }
+
     const [schoolYearSemester] = await pool.query(
       "SELECT id FROM school_year_semesters WHERE status = 'Active' LIMIT 1"
     );
 
-    if (!schoolYearSemester || !schoolYearSemester[0]) {
+    if (!schoolYearSemester || schoolYearSemester.length === 0) {
       return res.status(400).json({
         success: false,
         message: "No active school year semester found.",
@@ -126,8 +159,15 @@ exports.addBlock = async (req, res) => {
     const school_year_semester_id = schoolYearSemester[0].id;
 
     const [result] = await pool.query(
-      "INSERT INTO blocks (name, course_id, year_level_id, status, school_year_semester_id) VALUES (?, ?, ?, ?, ?)",
-      [name, course_id, year_level_id, status, school_year_semester_id]
+      "INSERT INTO blocks (name, course_id, year_level_id, department_id, status, school_year_semester_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        name,
+        course_id,
+        year_level_id,
+        department_id,
+        status,
+        school_year_semester_id,
+      ]
     );
 
     const [newBlock] = await pool.query(
@@ -135,18 +175,27 @@ exports.addBlock = async (req, res) => {
       [result.insertId]
     );
 
+    if (!newBlock || newBlock.length === 0) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch the newly created block.",
+      });
+    }
+
     res.status(201).json({
       success: true,
       data: newBlock[0],
       message: "Block added successfully.",
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     if (error.code === "ER_DUP_ENTRY") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Block name already exists." });
+      return res.status(400).json({
+        success: false,
+        message:
+          "Block name already exists for this department and school year semester.",
+      });
     }
 
     res.status(500).json({
@@ -159,7 +208,7 @@ exports.addBlock = async (req, res) => {
 
 exports.editBlock = async (req, res) => {
   const { id } = req.params;
-  const { name, course_id, year_level_id, status } = req.body;
+  const { name, course_id, year_level_id, department_id, status } = req.body;
 
   if (!id) {
     return res.status(400).json({
@@ -168,11 +217,11 @@ exports.editBlock = async (req, res) => {
     });
   }
 
-  if (!name && !course_id && !year_level_id && !status) {
+  if (!name && !course_id && !year_level_id && !department_id && !status) {
     return res.status(400).json({
       success: false,
       message:
-        "At least one field (name, course ID, year level ID, or status) must be provided.",
+        "At least one field (name, course ID, year level ID, department ID, or status) must be provided.",
     });
   }
 
@@ -191,6 +240,10 @@ exports.editBlock = async (req, res) => {
     if (year_level_id) {
       updates.push("year_level_id = ?");
       values.push(year_level_id);
+    }
+    if (department_id) {
+      updates.push("department_id = ?");
+      values.push(department_id);
     }
     if (status) {
       updates.push("status = ?");

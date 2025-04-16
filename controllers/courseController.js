@@ -196,3 +196,37 @@ exports.fetchCourseById = async (req, res) => {
     });
   }
 };
+
+exports.getCoursesByDepartmentId = async (req, res) => {
+  try {
+    const { department_id } = req.params;
+
+    if (!department_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required field: department_id",
+      });
+    }
+
+    const query = `
+      SELECT * FROM view_courses 
+      WHERE department_id = ? AND status = 'Active'
+    `;
+
+    const [courses] = await pool.query(query, [department_id]);
+
+    if (!courses.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No active courses found for this department",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      courses,
+    });
+  } catch (error) {
+    return handleError(res, error, "Failed to fetch courses by department ID");
+  }
+};
