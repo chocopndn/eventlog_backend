@@ -69,7 +69,6 @@ exports.getUpcomingEvents = async (req, res) => {
           const blockIds = JSON.parse(event.block_ids);
           const departmentIds = event.department_ids.split(",").map(String);
 
-          // Parse event_date_ids into an array
           const eventDateIds = JSON.parse(event.event_date_ids);
 
           return {
@@ -77,7 +76,7 @@ exports.getUpcomingEvents = async (req, res) => {
             event_dates: eventDates,
             block_ids: blockIds,
             department_ids: departmentIds,
-            event_date_ids: eventDateIds, // Ensure this is a proper array
+            event_date_ids: eventDateIds,
             first_event_date: formatDate(firstEventDate),
             last_event_date: formatDate(lastEventDate),
           };
@@ -125,6 +124,7 @@ exports.addEvent = async (req, res) => {
     pm_out,
     duration,
     admin_id_number: created_by,
+    status = "Pending",
   } = req.body;
 
   if (
@@ -139,6 +139,15 @@ exports.addEvent = async (req, res) => {
     return res
       .status(400)
       .json({ message: "Missing or invalid required fields." });
+  }
+
+  const allowedStatuses = ["Pending", "Approved"];
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({
+      message: `Invalid status. Allowed values are: ${allowedStatuses.join(
+        ", "
+      )}.`,
+    });
   }
 
   const db = await pool.getConnection();
@@ -218,7 +227,7 @@ exports.addEvent = async (req, res) => {
     const [eventResult] = await db.query(
       `INSERT INTO events
         (event_name_id, school_year_semester_id, venue, description, scan_personnel, created_by, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         event_name_id,
         school_year_semester_id,
@@ -226,6 +235,7 @@ exports.addEvent = async (req, res) => {
         description,
         "Year Level Representatives, Governor, or Year Level Advisers",
         created_by,
+        status,
       ]
     );
     const eventId = eventResult.insertId;
