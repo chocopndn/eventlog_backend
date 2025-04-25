@@ -124,6 +124,7 @@ exports.addEvent = async (req, res) => {
     pm_out,
     duration,
     admin_id_number: created_by,
+    status = "Pending",
   } = req.body;
 
   if (
@@ -138,6 +139,15 @@ exports.addEvent = async (req, res) => {
     return res
       .status(400)
       .json({ message: "Missing or invalid required fields." });
+  }
+
+  const allowedStatuses = ["Pending", "Approved"];
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({
+      message: `Invalid status. Allowed values are: ${allowedStatuses.join(
+        ", "
+      )}.`,
+    });
   }
 
   const db = await pool.getConnection();
