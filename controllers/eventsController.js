@@ -69,7 +69,6 @@ exports.getUpcomingEvents = async (req, res) => {
           const blockIds = JSON.parse(event.block_ids);
           const departmentIds = event.department_ids.split(",").map(String);
 
-          // Parse event_date_ids into an array
           const eventDateIds = JSON.parse(event.event_date_ids);
 
           return {
@@ -77,7 +76,7 @@ exports.getUpcomingEvents = async (req, res) => {
             event_dates: eventDates,
             block_ids: blockIds,
             department_ids: departmentIds,
-            event_date_ids: eventDateIds, // Ensure this is a proper array
+            event_date_ids: eventDateIds,
             first_event_date: formatDate(firstEventDate),
             last_event_date: formatDate(lastEventDate),
           };
@@ -168,7 +167,7 @@ exports.addEvent = async (req, res) => {
     }
 
     const [existingAdmin] = await db.query(
-      `SELECT id_number FROM admins WHERE id_number = ?`,
+      `SELECT id_number, role_id FROM admins WHERE id_number = ?`,
       [created_by]
     );
 
@@ -176,6 +175,8 @@ exports.addEvent = async (req, res) => {
       await db.rollback();
       return res.status(400).json({ message: "Invalid admin ID." });
     }
+
+    const isAdminRole4 = existingAdmin[0].role_id === 4;
 
     const uniqueDates = [...new Set(event_dates)].sort();
     const uniqueBlocks = [...new Set(block_ids)].map(String).sort();
@@ -218,7 +219,7 @@ exports.addEvent = async (req, res) => {
     const [eventResult] = await db.query(
       `INSERT INTO events
         (event_name_id, school_year_semester_id, venue, description, scan_personnel, created_by, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         event_name_id,
         school_year_semester_id,
@@ -226,6 +227,7 @@ exports.addEvent = async (req, res) => {
         description,
         "Year Level Representatives, Governor, or Year Level Advisers",
         created_by,
+        isAdminRole4 ? "Approved" : "Pending",
       ]
     );
     const eventId = eventResult.insertId;
@@ -252,11 +254,74 @@ exports.addEvent = async (req, res) => {
       blockValues,
     ]);
 
+    if (isAdminRole4) {
+      const [eventDates] = await db.query(
+        `SELECT id, event_date FROM event_dates WHERE event_id = ?`,
+        [eventId]
+      );
+
+      const [eventBlocks] = await db.query(
+        `SELECT block_id FROM event_blocks WHERE event_id = ?`,
+        [eventId]
+      );
+
+      if (eventDates.length === 0 || eventBlocks.length === 0) {
+        await db.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "No event dates or blocks found for this event",
+        });
+      }
+
+      const blockIds = eventBlocks.map((block) => block.block_id);
+
+      const [studentsInBlocks] = await db.query(
+        `SELECT id_number FROM users WHERE block_id IN (?) AND role_id IN (1, 2)`,
+        [blockIds]
+      );
+
+      const studentIds = studentsInBlocks.map((student) => student.id_number);
+
+      if (studentIds.length === 0) {
+        await db.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "No eligible students found for the selected blocks",
+        });
+      }
+
+      const attendanceRecords = [];
+
+      for (const eventDate of eventDates) {
+        for (const studentId of studentIds) {
+          attendanceRecords.push([
+            eventDate.id,
+            studentId,
+            false,
+            false,
+            false,
+            false,
+          ]);
+        }
+      }
+
+      if (attendanceRecords.length > 0) {
+        await db.query(
+          `INSERT INTO attendance
+            (event_date_id, student_id_number, am_in, am_out, pm_in, pm_out)
+            VALUES ?`,
+          [attendanceRecords]
+        );
+      }
+    }
+
     await db.commit();
 
     return res.status(201).json({
       success: true,
-      message: "Event created successfully",
+      message: isAdminRole4
+        ? "Event created and automatically approved successfully"
+        : "Event created successfully",
       event_id: eventId,
     });
   } catch (error) {
@@ -777,28 +842,103 @@ exports.approveEventById = async (req, res) => {
     });
   }
 
+  const db = await pool.getConnection();
   try {
-    const [result] = await pool.query(
-      `UPDATE events SET status = 'approved', approved_by = ? WHERE id = ?`,
+    await db.beginTransaction();
+
+    const [updateResult] = await db.query(
+      `UPDATE events SET status = 'Approved', approved_by = ? WHERE id = ?`,
       [admin_id_number, id]
     );
 
-    if (result.affectedRows === 0) {
+    if (updateResult.affectedRows === 0) {
+      await db.rollback();
       return res.status(404).json({
         success: false,
         message: "Event not found",
       });
     }
 
+    const [eventDates] = await db.query(
+      `SELECT id, event_date FROM event_dates WHERE event_id = ?`,
+      [id]
+    );
+
+    const [eventBlocks] = await db.query(
+      `SELECT block_id FROM event_blocks WHERE event_id = ?`,
+      [id]
+    );
+
+    if (eventDates.length === 0 || eventBlocks.length === 0) {
+      await db.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "No event dates or blocks found for this event",
+      });
+    }
+
+    const blockIds = eventBlocks.map((block) => block.block_id);
+
+    const [studentsInBlocks] = await db.query(
+      `SELECT id_number FROM users WHERE block_id IN (?) AND role_id IN (1, 2)`,
+      [blockIds]
+    );
+
+    const studentIds = studentsInBlocks.map((student) => student.id_number);
+
+    console.log("Eligible Students:", studentIds);
+
+    if (studentIds.length === 0) {
+      await db.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "No eligible students found for the selected blocks",
+      });
+    }
+
+    const attendanceRecords = [];
+
+    for (const eventDate of eventDates) {
+      for (const studentId of studentIds) {
+        attendanceRecords.push([
+          eventDate.id,
+          studentId,
+          false,
+          false,
+          false,
+          false,
+        ]);
+      }
+    }
+
+    console.log("Added Attendance Records:", attendanceRecords);
+
+    if (attendanceRecords.length > 0) {
+      await db.query(
+        `INSERT INTO attendance
+          (event_date_id, student_id_number, am_in, am_out, pm_in, pm_out)
+          VALUES ?`,
+        [attendanceRecords]
+      );
+    }
+
+    await db.commit();
+
     return res.json({
       success: true,
-      message: "Event approved successfully",
+      message: "Event approved successfully and attendance records created",
+      eligible_students: studentIds,
+      attendance_records: attendanceRecords,
     });
   } catch (error) {
     console.error("Error approving event:", error);
+
+    await db.rollback();
     return res.status(500).json({
       success: false,
       message: "Failed to approve event",
     });
+  } finally {
+    db.release();
   }
 };
