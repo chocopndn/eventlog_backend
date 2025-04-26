@@ -559,3 +559,57 @@ exports.fetchAllOngoingEvents = async (req, res) => {
     });
   }
 };
+
+exports.fetchBlocksOfEvents = async (req, res) => {
+  try {
+    const { event_id } = req.body;
+
+    if (!event_id) {
+      return res.status(400).json({
+        message: "Missing required parameter: event_id.",
+      });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      const query = `
+        SELECT 
+          b.id AS block_id, 
+          b.name AS block_name 
+        FROM 
+          event_blocks eb
+        INNER JOIN 
+          blocks b 
+        ON 
+          eb.block_id = b.id
+        WHERE 
+          eb.event_id = ?
+      `;
+      const [rows] = await connection.query(query, [event_id]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({
+          message: "No blocks found for the given event_id.",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Blocks fetched successfully.",
+        blocks: rows,
+      });
+    } catch (dbError) {
+      console.error("Database error:", dbError);
+      return res.status(500).json({
+        message: "Database error while fetching blocks for the event.",
+      });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error("An error occurred:", error);
+    return res.status(500).json({
+      message: "An error occurred while processing the request.",
+    });
+  }
+};
