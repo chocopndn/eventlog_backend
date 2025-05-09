@@ -562,54 +562,97 @@ exports.fetchAllOngoingEvents = async (req, res) => {
 
 exports.fetchBlocksOfEvents = async (req, res) => {
   try {
-    const { event_id } = req.body;
+    const { event_id, department_id, year_level_id } = req.body;
 
     if (!event_id) {
-      return res.status(400).json({
-        message: "Missing required parameter: event_id.",
-      });
+      return res
+        .status(400)
+        .json({ message: "Missing required parameter: event_id." });
     }
 
     const connection = await pool.getConnection();
     try {
-      const query = `
+      let query = `
         SELECT 
-          b.id AS block_id, 
-          b.name AS block_name 
-        FROM 
-          event_blocks eb
-        INNER JOIN 
-          blocks b 
-        ON 
-          eb.block_id = b.id
-        WHERE 
-          eb.event_id = ?
+          eb.event_id,
+          e.event_name_id,
+          en.name AS event_title,
+          b.id AS block_id,
+          b.name AS block_name,
+          d.id AS department_id,
+          b.year_level_id
+        FROM event_blocks eb
+        JOIN blocks b ON eb.block_id = b.id
+        JOIN events e ON eb.event_id = e.id
+        JOIN event_names en ON e.event_name_id = en.id
+        JOIN departments d ON b.department_id = d.id
+        WHERE e.status IN ('Approved', 'Archived') AND eb.event_id = ?
       `;
-      const [rows] = await connection.query(query, [event_id]);
+
+      const params = [event_id];
+
+      if (department_id) {
+        query += ` AND b.department_id = ?`;
+        params.push(department_id);
+      }
+
+      if (year_level_id) {
+        query += ` AND b.year_level_id = ?`;
+        params.push(year_level_id);
+      }
+
+      const [rows] = await connection.query(query, params);
 
       if (rows.length === 0) {
-        return res.status(404).json({
-          message: "No blocks found for the given event_id.",
-        });
+        return res.status(404).json({ message: "No matching data found." });
       }
+
+      const blocksData = {
+        event_id: rows[0].event_id,
+        event_title: rows[0].event_title,
+        block_details: [],
+        department_ids: [],
+        yearlevel_ids: [],
+      };
+
+      // Collecting block details, department IDs, and year levels
+      rows.forEach((row) => {
+        const { block_id, block_name, department_id, year_level_id } = row;
+
+        // Adding block details
+        blocksData.block_details.push({
+          block_id,
+          block_name,
+        });
+
+        // Adding department IDs (ensure uniqueness)
+        if (!blocksData.department_ids.includes(department_id)) {
+          blocksData.department_ids.push(department_id);
+        }
+
+        // Adding year level IDs (ensure uniqueness)
+        if (!blocksData.yearlevel_ids.includes(year_level_id)) {
+          blocksData.yearlevel_ids.push(year_level_id);
+        }
+      });
 
       return res.status(200).json({
         success: true,
-        message: "Blocks fetched successfully.",
-        blocks: rows,
+        message: "Event block data retrieved successfully.",
+        data: blocksData,
       });
     } catch (dbError) {
       console.error("Database error:", dbError);
       return res.status(500).json({
-        message: "Database error while fetching blocks for the event.",
+        message: "Database error while fetching event block details.",
       });
     } finally {
       connection.release();
     }
   } catch (error) {
     console.error("An error occurred:", error);
-    return res.status(500).json({
-      message: "An error occurred while processing the request.",
-    });
+    return res
+      .status(500)
+      .json({ message: "An error occurred while processing the request." });
   }
 };
