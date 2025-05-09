@@ -615,22 +615,22 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         yearlevel_ids: [],
       };
 
-      // Collecting block details, department IDs, and year levels
+      
       rows.forEach((row) => {
         const { block_id, block_name, department_id, year_level_id } = row;
 
-        // Adding block details
+        
         blocksData.block_details.push({
           block_id,
           block_name,
         });
 
-        // Adding department IDs (ensure uniqueness)
+        
         if (!blocksData.department_ids.includes(department_id)) {
           blocksData.department_ids.push(department_id);
         }
 
-        // Adding year level IDs (ensure uniqueness)
+        
         if (!blocksData.yearlevel_ids.includes(year_level_id)) {
           blocksData.yearlevel_ids.push(year_level_id);
         }
