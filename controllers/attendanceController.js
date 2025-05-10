@@ -575,32 +575,33 @@ exports.fetchBlocksOfEvents = async (req, res) => {
     try {
       let query = `
         SELECT 
-          eb.event_id,
-          e.event_name_id,
-          en.name AS event_title,
-          b.id AS block_id,
-          b.name AS block_name,
-          c.id AS course_id,
-          c.code AS course_code,           
-          b.department_id,
-          b.year_level_id
-        FROM event_blocks eb
-        JOIN blocks b ON eb.block_id = b.id
-        JOIN events e ON eb.event_id = e.id
-        JOIN event_names en ON e.event_name_id = en.id
-        JOIN courses c ON b.course_id = c.id  
-        WHERE e.status IN ('Approved', 'Archived') AND eb.event_id = ?
+          event_blocks.event_id,
+          events.event_name_id,
+          event_names.name AS event_title,
+          blocks.id AS block_id,
+          blocks.name AS block_name,
+          courses.id AS course_id,
+          courses.code AS course_code,           
+          blocks.department_id,
+          blocks.year_level_id
+        FROM event_blocks
+        JOIN blocks ON event_blocks.block_id = blocks.id
+        JOIN events ON event_blocks.event_id = events.id
+        JOIN event_names ON events.event_name_id = event_names.id
+        JOIN courses ON blocks.course_id = courses.id  
+        WHERE events.status IN ('Approved', 'Archived') 
+          AND event_blocks.event_id = ?
       `;
 
       const params = [event_id];
 
       if (department_id) {
-        query += ` AND b.department_id = ?`;
+        query += ` AND blocks.department_id = ?`;
         params.push(department_id);
       }
 
       if (year_level_id) {
-        query += ` AND b.year_level_id = ?`;
+        query += ` AND blocks.year_level_id = ?`;
         params.push(year_level_id);
       }
 
@@ -610,7 +611,7 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         search_query.trim() !== ""
       ) {
         const likeQuery = `%${search_query.trim()}%`;
-        query += ` AND (b.name LIKE ? OR c.code LIKE ?)`;
+        query += ` AND (blocks.name LIKE ? OR courses.code LIKE ?)`;
         params.push(likeQuery, likeQuery);
       }
 
