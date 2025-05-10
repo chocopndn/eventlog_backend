@@ -562,7 +562,7 @@ exports.fetchAllOngoingEvents = async (req, res) => {
 
 exports.fetchBlocksOfEvents = async (req, res) => {
   try {
-    const { event_id, department_id, year_level_id } = req.body;
+    const { event_id, department_id, year_level_id, search_query } = req.body;
 
     if (!event_id) {
       return res.status(400).json({
@@ -602,6 +602,16 @@ exports.fetchBlocksOfEvents = async (req, res) => {
       if (year_level_id) {
         query += ` AND b.year_level_id = ?`;
         params.push(year_level_id);
+      }
+
+      if (
+        search_query &&
+        typeof search_query === "string" &&
+        search_query.trim() !== ""
+      ) {
+        const likeQuery = `%${search_query.trim()}%`;
+        query += ` AND (b.name LIKE ? OR c.code LIKE ?)`;
+        params.push(likeQuery, likeQuery);
       }
 
       console.log("🔧 Final query:", query);
