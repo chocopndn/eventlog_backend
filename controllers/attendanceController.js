@@ -565,9 +565,10 @@ exports.fetchBlocksOfEvents = async (req, res) => {
     const { event_id, department_id, year_level_id } = req.body;
 
     if (!event_id) {
-      return res
-        .status(400)
-        .json({ message: "Missing required parameter: event_id." });
+      return res.status(400).json({
+        success: false,
+        message: "Missing required parameter: event_id.",
+      });
     }
 
     const connection = await pool.getConnection();
@@ -579,13 +580,15 @@ exports.fetchBlocksOfEvents = async (req, res) => {
           en.name AS event_title,
           b.id AS block_id,
           b.name AS block_name,
-          d.id AS department_id,
+          c.id AS course_id,
+          c.code AS course_code,           
+          b.department_id,
           b.year_level_id
         FROM event_blocks eb
         JOIN blocks b ON eb.block_id = b.id
         JOIN events e ON eb.event_id = e.id
         JOIN event_names en ON e.event_name_id = en.id
-        JOIN departments d ON b.department_id = d.id
+        JOIN courses c ON b.course_id = c.id  
         WHERE e.status IN ('Approved', 'Archived') AND eb.event_id = ?
       `;
 
@@ -601,49 +604,53 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         params.push(year_level_id);
       }
 
+      console.log("🔧 Final query:", query);
+      console.log("🧾 Parameters:", params);
+
       const [rows] = await connection.query(query, params);
 
       if (rows.length === 0) {
-        return res.status(404).json({ message: "No matching data found." });
+        return res.status(404).json({
+          success: true,
+          message: "No matching data found.",
+          data: {
+            event_id: event_id,
+            event_title: "Event Blocks",
+            block_details: [],
+            department_ids: [],
+            yearlevel_ids: [],
+          },
+        });
       }
 
-      const blocksData = {
-        event_id: rows[0].event_id,
-        event_title: rows[0].event_title,
-        block_details: [],
-        department_ids: [],
-        yearlevel_ids: [],
-      };
+      const department_ids = [...new Set(rows.map((row) => row.department_id))];
+      const yearlevel_ids = [...new Set(rows.map((row) => row.year_level_id))];
 
-      
-      rows.forEach((row) => {
-        const { block_id, block_name, department_id, year_level_id } = row;
+      const block_details = rows.map((row) => ({
+        block_id: row.block_id,
+        block_name: row.block_name,
+        course_code: row.course_code,
+        department_id: row.department_id,
+        year_level_id: row.year_level_id,
+      }));
 
-        
-        blocksData.block_details.push({
-          block_id,
-          block_name,
-        });
-
-        
-        if (!blocksData.department_ids.includes(department_id)) {
-          blocksData.department_ids.push(department_id);
-        }
-
-        
-        if (!blocksData.yearlevel_ids.includes(year_level_id)) {
-          blocksData.yearlevel_ids.push(year_level_id);
-        }
-      });
-
-      return res.status(200).json({
+      const result = {
         success: true,
         message: "Event block data retrieved successfully.",
-        data: blocksData,
-      });
+        data: {
+          event_id: rows[0].event_id,
+          event_title: rows[0].event_title,
+          block_details,
+          department_ids,
+          yearlevel_ids,
+        },
+      };
+
+      return res.status(200).json(result);
     } catch (dbError) {
       console.error("Database error:", dbError);
       return res.status(500).json({
+        success: false,
         message: "Database error while fetching event block details.",
       });
     } finally {
@@ -651,8 +658,9 @@ exports.fetchBlocksOfEvents = async (req, res) => {
     }
   } catch (error) {
     console.error("An error occurred:", error);
-    return res
-      .status(500)
-      .json({ message: "An error occurred while processing the request." });
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while processing the request.",
+    });
   }
 };
