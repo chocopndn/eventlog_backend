@@ -565,6 +565,7 @@ exports.fetchBlocksOfEvents = async (req, res) => {
     const { event_id, department_id, year_level_id, search_query } = req.body;
 
     if (!event_id) {
+      console.error("Missing required parameter: event_id");
       return res.status(400).json({
         success: false,
         message: "Missing required parameter: event_id.",
@@ -589,14 +590,8 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         JOIN events ON event_blocks.event_id = events.id
         JOIN event_names ON events.event_name_id = event_names.id
         JOIN courses ON blocks.course_id = courses.id  
-        WHERE events.status IN ('Approved', 'Archived') 
+        WHERE events.status IN ('Approved', 'Archived')
           AND event_blocks.event_id = ?
-          AND EXISTS (
-            SELECT 1 
-            FROM users
-            WHERE users.block_id = blocks.id
-              AND users.role_id = (SELECT id FROM roles WHERE name = 'Student')
-          )
       `;
 
       const params = [event_id];
@@ -626,8 +621,11 @@ exports.fetchBlocksOfEvents = async (req, res) => {
 
       const [rows] = await connection.query(query, params);
 
+      console.log("Query result:", rows);
+
       if (rows.length === 0) {
-        return res.status(404).json({
+        console.log("No matching data found for event_id:", event_id);
+        return res.status(200).json({
           success: true,
           message: "No matching data found.",
           data: {
@@ -651,6 +649,12 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         year_level_id: row.year_level_id,
       }));
 
+      console.log(
+        "Event block data retrieved successfully for event_id:",
+        event_id
+      );
+      console.log("Block details:", block_details);
+
       const result = {
         success: true,
         message: "Event block data retrieved successfully.",
@@ -663,21 +667,27 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         },
       };
 
+      console.log("Return data:", result);
       return res.status(200).json(result);
     } catch (dbError) {
-      console.error("Database error:", dbError);
+      console.error(
+        "Database error while fetching event block details:",
+        dbError
+      );
       return res.status(500).json({
         success: false,
         message: "Database error while fetching event block details.",
+        error: dbError.message,
       });
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error("An error occurred:", error);
+    console.error("An error occurred while processing the request:", error);
     return res.status(500).json({
       success: false,
       message: "An error occurred while processing the request.",
+      error: error.message,
     });
   }
 };
