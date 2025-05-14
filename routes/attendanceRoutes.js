@@ -18,8 +18,9 @@ router
   .route("/admin/past/events")
   .post(attendanceController.fetchAllPastEvents);
 
-  router
-  .route("/events/blocks")
-  .post(attendanceController.fetchBlocksOfEvents);
+router.route("/events/blocks").post(attendanceController.fetchBlocksOfEvents);
+router
+  .route("/events/block/students")
+  .post(attendanceController.fetchStudentAttendanceByEventAndBlock);
 
 module.exports = router;
