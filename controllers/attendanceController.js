@@ -837,16 +837,16 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
             ? row.event_date.toISOString().split("T")[0]
             : "unknown",
           schedule: {
-            am_in: row.event_am_in,
-            am_out: row.event_am_out,
-            pm_in: row.event_pm_in,
-            pm_out: row.event_pm_out,
+            ...(row.event_am_in && { am_in: row.event_am_in }),
+            ...(row.event_am_out && { am_out: row.event_am_out }),
+            ...(row.event_pm_in && { pm_in: row.event_pm_in }),
+            ...(row.event_pm_out && { pm_out: row.event_pm_out }),
           },
           attendance: {
-            am_in: Boolean(row.student_am_in),
-            am_out: Boolean(row.student_am_out),
-            pm_in: Boolean(row.student_pm_in),
-            pm_out: Boolean(row.student_pm_out),
+            ...(Boolean(row.student_am_in) && { am_in: true }),
+            ...(Boolean(row.student_am_out) && { am_out: true }),
+            ...(Boolean(row.student_pm_in) && { pm_in: true }),
+            ...(Boolean(row.student_pm_out) && { pm_out: true }),
           },
         });
       });
@@ -895,6 +895,67 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
             limit: limitInt,
             total_pages: Math.ceil(total / limitInt),
           },
+        },
+      };
+
+      return res.status(200).json(result);
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while processing the request.",
+      error: error.message,
+    });
+  }
+};
+
+exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
+  try {
+    const { event_id, block_id } = req.body;
+
+    if (!event_id || !block_id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Missing required parameters: event_id and block_id are required.",
+      });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      const query = `
+        SELECT 
+          u.id_number AS student_id,
+          CONCAT(u.last_name, ', ', u.first_name, IFNULL(CONCAT(' ', u.suffix), '')) AS student_name,
+          SUM(IF(a.am_in = 1 OR a.am_out = 1 OR a.pm_in = 1 OR a.pm_out = 1, 1, 0)) AS present_count,
+          COUNT(ed.id) - SUM(IF(a.am_in = 1 OR a.am_out = 1 OR a.pm_in = 1 OR a.pm_out = 1, 1, 0)) AS absent_count
+        FROM users u
+        JOIN blocks b ON u.block_id = b.id
+        JOIN event_blocks eb ON eb.block_id = b.id AND eb.event_id = ?
+        JOIN event_dates ed ON ed.event_id = eb.event_id
+        LEFT JOIN attendance a ON a.student_id_number = u.id_number AND a.event_date_id = ed.id
+        WHERE b.id = ?
+        GROUP BY u.id_number, u.last_name, u.first_name, u.suffix
+      `;
+
+      const [rows] = await connection.query(query, [event_id, block_id]);
+
+      const attendanceSummary = rows.map((row) => ({
+        student_id: row.student_id,
+        student_name: row.student_name,
+        present_count: row.present_count,
+        absent_count: row.absent_count,
+      }));
+
+      const result = {
+        success: true,
+        message: "Attendance summary per block retrieved successfully.",
+        data: {
+          event_id: Number(event_id),
+          block_id: Number(block_id),
+          attendance_summary: attendanceSummary,
         },
       };
 

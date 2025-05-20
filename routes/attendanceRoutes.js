@@ -23,4 +23,8 @@ router
   .route("/events/block/students")
   .post(attendanceController.fetchStudentAttendanceByEventAndBlock);
 
+router
+  .route("/summary")
+  .post(attendanceController.fetchAttendanceSummaryPerBlock);
+
 module.exports = router;
