@@ -26,5 +26,8 @@ router
 router
   .route("/summary")
   .post(attendanceController.fetchAttendanceSummaryPerBlock);
+router
+  .route("/student/summary")
+  .post(attendanceController.getStudentAttSummary);
 
 module.exports = router;

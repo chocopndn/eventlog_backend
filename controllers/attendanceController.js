@@ -971,3 +971,124 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
     });
   }
 };
+
+exports.getStudentAttSummary = async (req, res) => {
+  try {
+    const { event_id, student_id } = req.body;
+
+    if (!event_id || !student_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required parameters: event_id and student_id.",
+      });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      const [eventRows] = await connection.query(
+        `SELECT en.name AS event_name 
+         FROM events e
+         JOIN event_names en ON e.event_name_id = en.id
+         WHERE e.id = ?`,
+        [event_id]
+      );
+
+      if (eventRows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Event not found." });
+      }
+
+      const eventName = eventRows[0].event_name;
+
+      const [studentRows] = await connection.query(
+        `SELECT CONCAT(last_name, ', ', first_name, IFNULL(CONCAT(' ', middle_name), ''), IFNULL(CONCAT(' ', suffix), '')) AS name
+         FROM users
+         WHERE id_number = ?`,
+        [student_id]
+      );
+
+      if (studentRows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Student not found." });
+      }
+
+      const studentName = studentRows[0].name;
+
+      const [eventDatesRows] = await connection.query(
+        `SELECT id, event_date AS date, am_in, am_out, pm_in, pm_out
+         FROM event_dates
+         WHERE event_id = ?`,
+        [event_id]
+      );
+
+      const eventDatesMap = eventDatesRows.reduce((map, eventDate) => {
+        map[eventDate.id] = eventDate;
+        return map;
+      }, {});
+
+      const [attendanceRows] = await connection.query(
+        `SELECT event_date_id, am_in, am_out, pm_in, pm_out
+         FROM attendance
+         WHERE event_date_id IN (?) AND student_id_number = ?`,
+        [Object.keys(eventDatesMap), student_id]
+      );
+
+      const attendanceSummary = {};
+
+      attendanceRows.forEach((attendance) => {
+        const eventDate = eventDatesMap[attendance.event_date_id];
+        const date = eventDate.date;
+
+        if (!attendanceSummary[date]) {
+          attendanceSummary[date] = {
+            present_count: 0,
+            absent_count: 0,
+            total_count: 0,
+          };
+        }
+
+        const { am_in, am_out, pm_in, pm_out } = eventDate;
+        const totalCount =
+          Number(am_in !== null) +
+          Number(am_out !== null) +
+          Number(pm_in !== null) +
+          Number(pm_out !== null);
+
+        const presentCount =
+          Number(attendance.am_in) +
+          Number(attendance.am_out) +
+          Number(attendance.pm_in) +
+          Number(attendance.pm_out);
+
+        const absentCount = totalCount - presentCount;
+
+        attendanceSummary[date].present_count += presentCount;
+        attendanceSummary[date].absent_count += absentCount;
+        attendanceSummary[date].total_count = totalCount;
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Student attendance summary retrieved successfully.",
+        data: {
+          event_name: eventName,
+          student_id,
+          student_name: studentName,
+          attendance_summary: attendanceSummary,
+        },
+      });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error("Error fetching student attendance summary:", error);
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while processing the request.",
+      error: error.message,
+    });
+  }
+};
