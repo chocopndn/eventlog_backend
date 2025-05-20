@@ -17,6 +17,7 @@ const roleRoutes = require("./routes/roleRoutes");
 const yearLevelRoutes = require("./routes/yearLevelRoutes");
 const eventNameRoutes = require("./routes/eventNameRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
+const schoolYearRoutes = require("./routes/schoolYearRoutes");
 
 app.use(`/api/auth`, authRoutes);
 app.use(`/api/departments`, departmentRoutes);
@@ -29,6 +30,7 @@ app.use(`/api/roles`, roleRoutes);
 app.use(`/api/year-level`, yearLevelRoutes);
 app.use(`/api/event-names`, eventNameRoutes);
 app.use(`/api/attendance`, attendanceRoutes);
+app.use(`/api/school-years`, schoolYearRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running...");
