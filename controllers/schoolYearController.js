@@ -10,6 +10,7 @@ const updateStudents = async (filePath) => {
     await connection.query("START TRANSACTION");
 
     const rows = [];
+    const processedIdNumbers = new Set();
 
     await new Promise((resolve, reject) => {
       fs.createReadStream(filePath)
@@ -21,6 +22,7 @@ const updateStudents = async (filePath) => {
         .on("data", (row) => {
           if (row.id_number && row.id_number.trim() !== "") {
             rows.push(row);
+            processedIdNumbers.add(row.id_number);
           } else {
             console.error(
               `Skipping row with missing or invalid id_number: ${JSON.stringify(
@@ -59,6 +61,47 @@ const updateStudents = async (filePath) => {
 
       if (userResult.length > 0) {
         console.log(`User exists. Updating id_number: ${id_number}`);
+
+        const blockQuery = `
+          SELECT id FROM blocks
+          WHERE name = ? AND department_id = (
+            SELECT id FROM departments WHERE code = ?
+          ) AND school_year_semester_id = (
+            SELECT id FROM school_year_semesters WHERE status = 'Active'
+          )
+        `;
+        const blockValues = [block, department];
+        const [blockResult] = await connection.query(blockQuery, blockValues);
+
+        let blockId;
+        if (blockResult.length === 0) {
+          console.warn(
+            `Block not found for department: ${department}, block: ${block}. Skipping block update.`
+          );
+          blockId = userResult[0].block_id;
+        } else {
+          blockId = blockResult[0].id;
+        }
+
+        const updateQuery = `
+          UPDATE users
+          SET block_id = ?,
+          first_name = ?,
+          middle_name = ?,
+          last_name = ?,
+          suffix = ?,
+          status = CASE WHEN status != 'Unregistered' THEN 'Active' ELSE status END
+          WHERE id_number = ?
+        `;
+        const updateValues = [
+          blockId,
+          first_name,
+          middle_name || null,
+          last_name,
+          suffix || null,
+          id_number,
+        ];
+        await connection.query(updateQuery, updateValues);
       } else {
         console.log(
           `User not found with id_number: ${id_number}. Inserting new user.`
@@ -106,6 +149,17 @@ const updateStudents = async (filePath) => {
         console.log(`Inserted user with id: ${insertResult.insertId}`);
       }
     }
+
+    const disableQuery = `
+      UPDATE users
+      SET status = 'Disabled'
+      WHERE id_number NOT IN (?) AND status = 'Active'
+    `;
+    const disableValues = [Array.from(processedIdNumbers)];
+    const [disableResult] = await connection.query(disableQuery, disableValues);
+    console.log(
+      `Disabled ${disableResult.affectedRows} users not present in the CSV file.`
+    );
 
     await connection.query("COMMIT");
     console.log("CSV upload and student updates completed successfully.");
