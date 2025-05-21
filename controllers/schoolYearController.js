@@ -6,7 +6,6 @@ const updateStudents = async (filePath) => {
   const connection = await pool.getConnection();
 
   try {
-    console.log("Starting CSV upload and update...");
     await connection.query("START TRANSACTION");
 
     const rows = [];
@@ -23,20 +22,12 @@ const updateStudents = async (filePath) => {
           if (row.id_number && row.id_number.trim() !== "") {
             rows.push(row);
             processedIdNumbers.add(row.id_number);
-          } else {
-            console.error(
-              `Skipping row with missing or invalid id_number: ${JSON.stringify(
-                row
-              )}`
-            );
           }
         })
         .on("end", () => {
-          console.log(`CSV parsing finished. Total rows: ${rows.length}`);
           resolve();
         })
         .on("error", (err) => {
-          console.error("Error reading CSV file:", err);
           reject(err);
         });
     });
@@ -46,51 +37,78 @@ const updateStudents = async (filePath) => {
       const {
         id_number,
         department,
+        course,
         block,
+        year_level,
         first_name,
         middle_name,
         last_name,
         suffix,
       } = row;
 
-      console.log(`Processing row ${i + 1} with id_number: ${id_number}`);
-
       const userQuery = "SELECT * FROM users WHERE id_number = ?";
       const userValues = [id_number];
       const [userResult] = await connection.query(userQuery, userValues);
 
-      if (userResult.length > 0) {
-        console.log(`User exists. Updating id_number: ${id_number}`);
+      let blockId;
+      const blockQuery = `
+        SELECT id FROM blocks
+        WHERE name = ? AND department_id = (
+          SELECT id FROM departments WHERE code = ?
+        ) AND course_id = (
+          SELECT id FROM courses WHERE code = ?
+        ) AND year_level_id = ? AND school_year_semester_id = (
+          SELECT id FROM school_year_semesters WHERE status = 'Active'
+        )
+      `;
+      const blockValues = [block, department, course, year_level];
+      const [blockResult] = await connection.query(blockQuery, blockValues);
 
-        const blockQuery = `
-          SELECT id FROM blocks
-          WHERE name = ? AND department_id = (
-            SELECT id FROM departments WHERE code = ?
-          ) AND school_year_semester_id = (
-            SELECT id FROM school_year_semesters WHERE status = 'Active'
-          )
+      if (blockResult.length === 0) {
+        const departmentQuery = "SELECT id FROM departments WHERE code = ?";
+        const departmentValues = [department];
+        const [departmentResult] = await connection.query(
+          departmentQuery,
+          departmentValues
+        );
+        if (departmentResult.length === 0) continue;
+
+        const courseQuery = "SELECT id FROM courses WHERE code = ?";
+        const courseValues = [course];
+        const [courseResult] = await connection.query(
+          courseQuery,
+          courseValues
+        );
+        if (courseResult.length === 0) continue;
+
+        const insertBlockQuery = `
+          INSERT INTO blocks (name, department_id, course_id, year_level_id, school_year_semester_id)
+          VALUES (?, ?, ?, ?, (SELECT id FROM school_year_semesters WHERE status = 'Active'))
         `;
-        const blockValues = [block, department];
-        const [blockResult] = await connection.query(blockQuery, blockValues);
+        const insertBlockValues = [
+          block,
+          departmentResult[0].id,
+          courseResult[0].id,
+          year_level,
+        ];
+        const [insertBlockResult] = await connection.query(
+          insertBlockQuery,
+          insertBlockValues
+        );
+        blockId = insertBlockResult.insertId;
+      } else {
+        blockId = blockResult[0].id;
+      }
 
-        let blockId;
-        if (blockResult.length === 0) {
-          console.warn(
-            `Block not found for department: ${department}, block: ${block}. Skipping block update.`
-          );
-          blockId = userResult[0].block_id;
-        } else {
-          blockId = blockResult[0].id;
-        }
-
+      if (userResult.length > 0) {
         const updateQuery = `
           UPDATE users
           SET block_id = ?,
-          first_name = ?,
-          middle_name = ?,
-          last_name = ?,
-          suffix = ?,
-          status = CASE WHEN status != 'Unregistered' THEN 'Active' ELSE status END
+              first_name = ?,
+              middle_name = ?,
+              last_name = ?,
+              suffix = ?,
+              status = CASE WHEN status != 'Unregistered' THEN 'Active' ELSE status END
           WHERE id_number = ?
         `;
         const updateValues = [
@@ -103,50 +121,19 @@ const updateStudents = async (filePath) => {
         ];
         await connection.query(updateQuery, updateValues);
       } else {
-        console.log(
-          `User not found with id_number: ${id_number}. Inserting new user.`
-        );
-
-        const blockQuery = `
-          SELECT id FROM blocks
-          WHERE name = ? AND department_id = (
-            SELECT id FROM departments WHERE code = ?
-          ) AND school_year_semester_id = (
-            SELECT id FROM school_year_semesters WHERE status = 'Active'
-          )
-        `;
-        const blockValues = [block, department];
-        const [blockResult] = await connection.query(blockQuery, blockValues);
-
-        if (blockResult.length === 0) {
-          console.error(
-            `Block not found for department: ${department}, block: ${block}. Skipping user insertion.`
-          );
-          continue;
-        }
-
-        console.log(`Block found with id: ${blockResult[0].id}`);
-
         const insertQuery = `
           INSERT INTO users (id_number, block_id, first_name, middle_name, last_name, suffix, status)
-          VALUES (?, ?, ?, ?, ?, ?, 'Active')
+          VALUES (?, ?, ?, ?, ?, ?, 'Unregistered')
         `;
         const insertValues = [
           id_number,
-          blockResult[0].id,
+          blockId,
           first_name,
           middle_name || null,
           last_name,
           suffix || null,
         ];
-
-        console.log(`Inserting user with values: ${insertValues}`);
-
-        const [insertResult] = await connection.query(
-          insertQuery,
-          insertValues
-        );
-        console.log(`Inserted user with id: ${insertResult.insertId}`);
+        await connection.query(insertQuery, insertValues);
       }
     }
 
@@ -156,25 +143,194 @@ const updateStudents = async (filePath) => {
       WHERE id_number NOT IN (?) AND status = 'Active'
     `;
     const disableValues = [Array.from(processedIdNumbers)];
-    const [disableResult] = await connection.query(disableQuery, disableValues);
-    console.log(
-      `Disabled ${disableResult.affectedRows} users not present in the CSV file.`
-    );
+    await connection.query(disableQuery, disableValues);
 
     await connection.query("COMMIT");
-    console.log("CSV upload and student updates completed successfully.");
   } catch (error) {
     await connection.query("ROLLBACK");
-    console.error(
-      "Error occurred during CSV upload and student updates:",
-      error
-    );
     throw error;
   } finally {
     connection.release();
   }
 };
 
+async function changeSchoolYear(filePath) {
+  const connection = await pool.getConnection();
+
+  function normalizeBlockName(name) {
+    return name.trim().toUpperCase().replace(/\s+/g, " ");
+  }
+
+  try {
+    await connection.query("START TRANSACTION");
+
+    const [currentSemesterResult] = await connection.query(
+      `SELECT id, school_year, semester FROM school_year_semesters WHERE status = 'Active'`
+    );
+    if (currentSemesterResult.length === 0)
+      throw new Error("No active semester found");
+
+    const {
+      id: currentSemesterId,
+      school_year,
+      semester,
+    } = currentSemesterResult[0];
+
+    await connection.query(
+      `UPDATE school_year_semesters SET status = 'Archived' WHERE id = ?`,
+      [currentSemesterId]
+    );
+
+    let newSchoolYear = school_year;
+    let newSemester = "";
+    if (semester === "1st Semester") newSemester = "2nd Semester";
+    else if (semester === "2nd Semester") {
+      const [yearStart, yearEnd] = school_year.split("-");
+      newSchoolYear = `${yearEnd}-${Number(yearEnd) + 1}`;
+      newSemester = "1st Semester";
+    }
+
+    const [insertNewSemester] = await connection.query(
+      `INSERT INTO school_year_semesters (school_year, semester, status) VALUES (?, ?, 'Active')`,
+      [newSchoolYear, newSemester]
+    );
+    const newSemesterId = insertNewSemester.insertId;
+
+    await connection.query(
+      `UPDATE blocks SET status = 'Archived' WHERE school_year_semester_id = ?`,
+      [currentSemesterId]
+    );
+
+    const rows = [];
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(
+          csv({
+            mapHeaders: ({ header }) => header.toLowerCase().replace(/ /g, "_"),
+          })
+        )
+        .on("data", (row) => rows.push(row))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    const blockCache = new Map();
+
+    for (const row of rows) {
+      const departmentCode = row.department.trim();
+      const courseCode = row.course.trim();
+      const blockRaw = row.block;
+      const blockName = normalizeBlockName(blockRaw);
+      const yearLevelId = row.year_level.trim();
+
+      const blockKey = `${departmentCode}-${courseCode}-${blockName}-${yearLevelId}`;
+
+      let blockId = blockCache.get(blockKey);
+      if (!blockId) {
+        // Check if block exists in DB
+        const [blockResult] = await connection.query(
+          `SELECT b.id FROM blocks b
+           JOIN departments d ON b.department_id = d.id
+           JOIN courses c ON b.course_id = c.id
+           WHERE d.code = ? AND c.code = ? AND b.name = ? AND b.year_level_id = ? AND b.school_year_semester_id = ? AND b.status = 'Active'
+           LIMIT 1`,
+          [departmentCode, courseCode, blockName, yearLevelId, newSemesterId]
+        );
+
+        if (blockResult.length > 0) {
+          blockId = blockResult[0].id;
+        } else {
+          // Get department id
+          const [deptResult] = await connection.query(
+            "SELECT id FROM departments WHERE code = ? LIMIT 1",
+            [departmentCode]
+          );
+          if (deptResult.length === 0) continue;
+          const departmentId = deptResult[0].id;
+
+          // Get course id
+          const [courseResult] = await connection.query(
+            "SELECT id FROM courses WHERE code = ? LIMIT 1",
+            [courseCode]
+          );
+          if (courseResult.length === 0) continue;
+          const courseId = courseResult[0].id;
+
+          // Verify year level exists
+          const [yearLevelResult] = await connection.query(
+            "SELECT id FROM year_levels WHERE id = ? LIMIT 1",
+            [yearLevelId]
+          );
+          if (yearLevelResult.length === 0) continue;
+
+          // Insert new block
+          const [insertBlockResult] = await connection.query(
+            `INSERT INTO blocks (name, department_id, course_id, year_level_id, school_year_semester_id, status)
+             VALUES (?, ?, ?, ?, ?, 'Active')`,
+            [blockName, departmentId, courseId, yearLevelId, newSemesterId]
+          );
+          blockId = insertBlockResult.insertId;
+        }
+        blockCache.set(blockKey, blockId);
+      }
+
+      // Now insert or update user with this block
+      const idNumber = row.id_number.trim();
+      const firstName = (row.first_name || "").trim();
+      const middleName = (row.middle_name || "").trim();
+      const lastName = (row.last_name || "").trim();
+      const suffix = (row.suffix || "").trim();
+
+      const [userResult] = await connection.query(
+        "SELECT id_number, status FROM users WHERE id_number = ? LIMIT 1",
+        [idNumber]
+      );
+
+      if (userResult.length === 0) {
+        await connection.query(
+          `INSERT INTO users (id_number, first_name, middle_name, last_name, suffix, block_id, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'Unregistered')`,
+          [idNumber, firstName, middleName, lastName, suffix, blockId]
+        );
+      } else {
+        const userStatus = userResult[0].status;
+        const updateQuery = `
+          UPDATE users
+          SET first_name = ?,
+          middle_name = ?,
+          last_name = ?,
+          suffix = ?,
+          block_id = ?
+          WHERE id_number = ?
+        `;
+        const updateValues = [
+          firstName,
+          middleName,
+          lastName,
+          suffix,
+          blockId,
+          idNumber,
+        ];
+        await connection.query(updateQuery, updateValues);
+
+        if (userStatus !== "Unregistered") {
+          await connection.query(
+            `UPDATE users SET status = 'Active' WHERE id_number = ?`,
+            [idNumber]
+          );
+        }
+      }
+    }
+
+    await connection.query("COMMIT");
+  } catch (error) {
+    await connection.query("ROLLBACK");
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
 module.exports = {
   updateStudents,
+  changeSchoolYear,
 };

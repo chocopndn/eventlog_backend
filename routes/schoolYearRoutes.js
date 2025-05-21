@@ -3,7 +3,6 @@ const router = express.Router();
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs").promises;
-
 const schoolYearController = require("../controllers/schoolYearController");
 
 const uploadDir = path.join(__dirname, "../uploads");
@@ -40,13 +39,32 @@ router.post("/update", upload.single("file"), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "CSV file is required." });
     }
-
     await schoolYearController.updateStudents(req.file.path);
-
     res.status(200).json({ message: "Students updated successfully." });
   } catch (error) {
     console.error("Error during updateStudents processing:", error);
     res.status(500).json({ error: "Failed to update students." });
+  } finally {
+    try {
+      if (req.file) {
+        await fs.unlink(req.file.path);
+      }
+    } catch (error) {
+      console.error("Error deleting uploaded file:", error);
+    }
+  }
+});
+
+router.post("/change-school-year", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "CSV file is required." });
+    }
+    await schoolYearController.changeSchoolYear(req.file.path);
+    res.status(200).json({ message: "School year changed successfully." });
+  } catch (error) {
+    console.error("Error during changeSchoolYear processing:", error);
+    res.status(500).json({ error: "Failed to change school year." });
   } finally {
     try {
       if (req.file) {
