@@ -330,7 +330,69 @@ async function changeSchoolYear(filePath) {
     connection.release();
   }
 }
+
+async function getCurrentSchoolYear(req, res) {
+  const connection = await pool.getConnection();
+
+  try {
+    console.log(
+      "[getCurrentSchoolYear] Fetching current active school year..."
+    );
+
+    const query = `
+      SELECT 
+        id,
+        school_year,
+        semester,
+        status
+      FROM school_year_semesters 
+      WHERE status = 'Active'
+      ORDER BY id DESC
+      LIMIT 1
+    `;
+
+    const [result] = await connection.query(query);
+
+    if (result.length === 0) {
+      console.warn("[getCurrentSchoolYear] No active school year found");
+      return res.status(404).json({
+        success: false,
+        message: "No active school year found",
+      });
+    }
+
+    const currentSchoolYear = result[0];
+    console.log(
+      `[getCurrentSchoolYear] Current school year: ${currentSchoolYear.school_year} - ${currentSchoolYear.semester}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Current school year retrieved successfully",
+      data: {
+        id: currentSchoolYear.id,
+        school_year: currentSchoolYear.school_year,
+        semester: currentSchoolYear.semester,
+        status: currentSchoolYear.status,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "[getCurrentSchoolYear] Error fetching current school year:",
+      error.message
+    );
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch current school year",
+      error: error.message,
+    });
+  } finally {
+    connection.release();
+  }
+}
+
 module.exports = {
   updateStudents,
   changeSchoolYear,
+  getCurrentSchoolYear,
 };
