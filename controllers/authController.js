@@ -136,6 +136,14 @@ exports.login = async (req, res) => {
       });
     }
 
+    if (!account.password_hash) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Your account isn't registered yet. Please sign up to continue.",
+      });
+    }
+
     const isPasswordValid = await bcrypt.compare(
       password,
       account.password_hash
