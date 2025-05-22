@@ -115,9 +115,9 @@ exports.addEvent = async (req, res) => {
   const {
     event_name_id,
     venue,
-    dates: event_dates,
+    dates: eventDates,
     description,
-    block_ids,
+    block_ids: blockIds,
     am_in,
     am_out,
     pm_in,
@@ -130,10 +130,10 @@ exports.addEvent = async (req, res) => {
   if (
     !event_name_id ||
     !venue ||
-    !Array.isArray(event_dates) ||
-    event_dates.length === 0 ||
-    !Array.isArray(block_ids) ||
-    block_ids.length === 0 ||
+    !Array.isArray(eventDates) ||
+    eventDates.length === 0 ||
+    !Array.isArray(blockIds) ||
+    blockIds.length === 0 ||
     !created_by
   ) {
     return res
@@ -154,44 +154,41 @@ exports.addEvent = async (req, res) => {
   try {
     await db.beginTransaction();
 
-    const [schoolYearSemester] = await db.query(
+    const [schoolYearSemesterRows] = await db.query(
       `SELECT id FROM school_year_semesters WHERE status = 'Active' LIMIT 1`
     );
 
-    if (!schoolYearSemester || schoolYearSemester.length === 0) {
+    if (!schoolYearSemesterRows || schoolYearSemesterRows.length === 0) {
       await db.rollback();
       return res
         .status(400)
         .json({ message: "No active school year semester found." });
     }
-    const school_year_semester_id = schoolYearSemester[0].id;
+    const school_year_semester_id = schoolYearSemesterRows[0].id;
 
-    const [existingEventName] = await db.query(
+    const [existingEventNameRows] = await db.query(
       `SELECT id FROM event_names WHERE id = ?`,
       [event_name_id]
     );
-
-    if (!existingEventName || existingEventName.length === 0) {
+    if (!existingEventNameRows || existingEventNameRows.length === 0) {
       await db.rollback();
       return res.status(400).json({ message: "Invalid event name ID." });
     }
 
-    const [existingAdmin] = await db.query(
+    const [existingAdminRows] = await db.query(
       `SELECT id_number, role_id FROM admins WHERE id_number = ?`,
       [created_by]
     );
-
-    if (!existingAdmin || existingAdmin.length === 0) {
+    if (!existingAdminRows || existingAdminRows.length === 0) {
       await db.rollback();
       return res.status(400).json({ message: "Invalid admin ID." });
     }
+    const isAdminRole4 = existingAdminRows[0].role_id === 4;
 
-    const isAdminRole4 = existingAdmin[0].role_id === 4;
+    const uniqueDates = [...new Set(eventDates)].sort();
+    const uniqueBlocks = [...new Set(blockIds.map(String))].sort();
 
-    const uniqueDates = [...new Set(event_dates)].sort();
-    const uniqueBlocks = [...new Set(block_ids)].map(String).sort();
-
-    const [existingEventView] = await db.query(
+    const [existingEventViewRows] = await db.query(
       `SELECT event_id, event_dates, block_ids
        FROM view_existing_events
        WHERE event_name_id = ? 
@@ -200,8 +197,8 @@ exports.addEvent = async (req, res) => {
       [event_name_id, venue]
     );
 
-    if (existingEventView && existingEventView.length > 0) {
-      const isDuplicate = existingEventView.some((existing) => {
+    if (existingEventViewRows && existingEventViewRows.length > 0) {
+      const isDuplicate = existingEventViewRows.some((existing) => {
         const existingDates = existing.event_dates
           ? existing.event_dates.split(",").sort()
           : [];
@@ -209,12 +206,12 @@ exports.addEvent = async (req, res) => {
           ? existing.block_ids.split(",").sort()
           : [];
 
-        const currentDatesMatch =
+        const datesMatch =
           JSON.stringify(uniqueDates) === JSON.stringify(existingDates);
-        const currentBlocksMatch =
+        const blocksMatch =
           JSON.stringify(uniqueBlocks) === JSON.stringify(existingBlocks);
 
-        return currentDatesMatch && currentBlocksMatch;
+        return datesMatch && blocksMatch;
       });
 
       if (isDuplicate) {
@@ -251,7 +248,6 @@ exports.addEvent = async (req, res) => {
       pm_out,
       duration,
     ]);
-
     await db.query(
       `INSERT INTO event_dates
         (event_id, event_date, am_in, am_out, pm_in, pm_out, duration)
@@ -264,67 +260,6 @@ exports.addEvent = async (req, res) => {
       blockValues,
     ]);
 
-    if (isAdminRole4) {
-      const [eventDates] = await db.query(
-        `SELECT id, event_date FROM event_dates WHERE event_id = ?`,
-        [eventId]
-      );
-
-      const [eventBlocks] = await db.query(
-        `SELECT block_id FROM event_blocks WHERE event_id = ?`,
-        [eventId]
-      );
-
-      if (eventDates.length === 0 || eventBlocks.length === 0) {
-        await db.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "No event dates or blocks found for this event",
-        });
-      }
-
-      const blockIds = eventBlocks.map((block) => block.block_id);
-
-      const [studentsInBlocks] = await db.query(
-        `SELECT id_number FROM users WHERE block_id IN (?) AND role_id IN (1, 2)`,
-        [blockIds]
-      );
-
-      const studentIds = studentsInBlocks.map((student) => student.id_number);
-
-      if (studentIds.length === 0) {
-        await db.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "No eligible students found for the selected blocks",
-        });
-      }
-
-      const attendanceRecords = [];
-
-      for (const eventDate of eventDates) {
-        for (const studentId of studentIds) {
-          attendanceRecords.push([
-            eventDate.id,
-            studentId,
-            false,
-            false,
-            false,
-            false,
-          ]);
-        }
-      }
-
-      if (attendanceRecords.length > 0) {
-        await db.query(
-          `INSERT INTO attendance
-            (event_date_id, student_id_number, am_in, am_out, pm_in, pm_out)
-            VALUES ?`,
-          [attendanceRecords]
-        );
-      }
-    }
-
     await db.commit();
 
     return res.status(201).json({
@@ -336,11 +271,8 @@ exports.addEvent = async (req, res) => {
     });
   } catch (error) {
     console.error("Error adding event:", error);
-
     await db.rollback();
-    return res.status(500).json({
-      message: "Failed to create event",
-    });
+    return res.status(500).json({ message: "Failed to create event" });
   } finally {
     db.release();
   }
@@ -380,6 +312,93 @@ exports.editEvent = async (req, res) => {
   const db = await pool.getConnection();
   try {
     await db.beginTransaction();
+
+    console.log(`Inspecting database for event ID: ${event_id}`);
+
+    const [eventDates] = await db.query(
+      `SELECT id FROM event_dates WHERE event_id = ?`,
+      [event_id]
+    );
+
+    console.log(`Found ${eventDates.length} event dates:`, eventDates);
+
+    for (const dateRow of eventDates) {
+      const dateId = dateRow.id;
+      console.log(`Checking attendance for event date ID: ${dateId}`);
+
+      const [attendanceRecords] = await db.query(
+        `SELECT id FROM attendance WHERE event_date_id = ?`,
+        [dateId]
+      );
+
+      console.log(
+        `Found ${attendanceRecords.length} attendance records for date ID: ${dateId}`
+      );
+
+      if (attendanceRecords.length > 0) {
+        for (const attRecord of attendanceRecords) {
+          const [confirmRecord] = await db.query(
+            `SELECT * FROM attendance WHERE id = ?`,
+            [attRecord.id]
+          );
+
+          console.log(
+            `Confirmed attendance record ${attRecord.id}:`,
+            confirmRecord[0]
+          );
+
+          console.log(`Deleting attendance record ID: ${attRecord.id}`);
+          const result = await db.query(`DELETE FROM attendance WHERE id = ?`, [
+            attRecord.id,
+          ]);
+
+          console.log(`Deletion result:`, result);
+
+          const [verifyDelete] = await db.query(
+            `SELECT * FROM attendance WHERE id = ?`,
+            [attRecord.id]
+          );
+
+          if (verifyDelete.length > 0) {
+            console.error(
+              `Failed to delete attendance record: ${attRecord.id}`
+            );
+            await db.rollback();
+            return res.status(500).json({
+              message: `Failed to delete attendance record: ${attRecord.id}`,
+            });
+          } else {
+            console.log(
+              `Successfully deleted attendance record: ${attRecord.id}`
+            );
+          }
+        }
+      }
+    }
+
+    let allAttendanceDeleted = true;
+    for (const dateRow of eventDates) {
+      const dateId = dateRow.id;
+      const [remainingAttendance] = await db.query(
+        `SELECT COUNT(*) as count FROM attendance WHERE event_date_id = ?`,
+        [dateId]
+      );
+
+      if (remainingAttendance[0].count > 0) {
+        console.error(
+          `Event date ID ${dateId} still has ${remainingAttendance[0].count} attendance records!`
+        );
+        allAttendanceDeleted = false;
+      }
+    }
+
+    if (!allAttendanceDeleted) {
+      console.error("Failed to delete all attendance records");
+      await db.rollback();
+      return res.status(500).json({
+        message: "Failed to delete all attendance records",
+      });
+    }
 
     const [schoolYearSemester] = await db.query(
       `SELECT id FROM school_year_semesters WHERE status = 'Active' LIMIT 1`
@@ -475,6 +494,7 @@ exports.editEvent = async (req, res) => {
       ]
     );
 
+    console.log(`Deleting event dates for event ID: ${event_id}`);
     await db.query(`DELETE FROM event_dates WHERE event_id = ?`, [event_id]);
 
     const dateValues = uniqueDates.map((event_date) => [
@@ -887,58 +907,11 @@ exports.approveEventById = async (req, res) => {
       });
     }
 
-    const blockIds = eventBlocks.map((block) => block.block_id);
-
-    const [studentsInBlocks] = await db.query(
-      `SELECT id_number FROM users WHERE block_id IN (?) AND role_id IN (1, 2)`,
-      [blockIds]
-    );
-
-    const studentIds = studentsInBlocks.map((student) => student.id_number);
-
-    console.log("Eligible Students:", studentIds);
-
-    if (studentIds.length === 0) {
-      await db.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "No eligible students found for the selected blocks",
-      });
-    }
-
-    const attendanceRecords = [];
-
-    for (const eventDate of eventDates) {
-      for (const studentId of studentIds) {
-        attendanceRecords.push([
-          eventDate.id,
-          studentId,
-          false,
-          false,
-          false,
-          false,
-        ]);
-      }
-    }
-
-    console.log("Added Attendance Records:", attendanceRecords);
-
-    if (attendanceRecords.length > 0) {
-      await db.query(
-        `INSERT INTO attendance
-          (event_date_id, student_id_number, am_in, am_out, pm_in, pm_out)
-          VALUES ?`,
-        [attendanceRecords]
-      );
-    }
-
     await db.commit();
 
     return res.json({
       success: true,
-      message: "Event approved successfully and attendance records created",
-      eligible_students: studentIds,
-      attendance_records: attendanceRecords,
+      message: "Event approved successfully",
     });
   } catch (error) {
     console.error("Error approving event:", error);
