@@ -76,4 +76,5 @@ router.post("/change-school-year", upload.single("file"), async (req, res) => {
   }
 });
 
+router.get("/current", schoolYearController.getCurrentSchoolYear);
 module.exports = router;
