@@ -575,39 +575,43 @@ exports.fetchBlocksOfEvents = async (req, res) => {
     try {
       let query = `
         SELECT 
-          event_blocks.event_id,
-          events.event_name_id,
-          event_names.name AS event_title,
-          blocks.id AS block_id,
-          blocks.name AS block_name,
-          courses.id AS course_id,
-          courses.code AS course_code,           
-          blocks.department_id,
-          blocks.year_level_id
-        FROM event_blocks
-        JOIN blocks ON event_blocks.block_id = blocks.id
-        JOIN events ON event_blocks.event_id = events.id
-        JOIN event_names ON events.event_name_id = event_names.id
-        JOIN courses ON blocks.course_id = courses.id  
-        WHERE events.status IN ('Approved', 'Archived')
-          AND event_blocks.event_id = ?
-          AND EXISTS (
-            SELECT 1
-            FROM users
-            WHERE users.block_id = blocks.id
-              AND users.status != 'Disabled'
-          )
+          eb.event_id,
+          e.event_name_id,
+          en.name AS event_title,
+          b.id AS block_id,
+          b.name AS block_name,
+          c.id AS course_id,
+          c.code AS course_code,
+          b.department_id,
+          b.year_level_id,
+          b.status AS block_status,
+          u.id_number AS student_id,
+          CONCAT(u.last_name, ', ', u.first_name, IFNULL(CONCAT(' ', u.middle_name), '')) AS student_name,
+          att.am_in, 
+          att.am_out, 
+          att.pm_in, 
+          att.pm_out
+        FROM event_blocks eb
+        JOIN blocks b ON eb.block_id = b.id
+        JOIN events e ON eb.event_id = e.id
+        JOIN event_names en ON e.event_name_id = en.id
+        JOIN courses c ON b.course_id = c.id
+        LEFT JOIN users u ON u.block_id = b.id AND u.status = 'Active'
+        LEFT JOIN attendance att ON att.student_id_number = u.id_number
+        LEFT JOIN event_dates ed ON ed.id = att.event_date_id AND ed.event_id = eb.event_id
+        WHERE e.status IN ('Approved', 'Archived')
+          AND eb.event_id = ?
       `;
 
       const params = [event_id];
 
       if (department_id) {
-        query += ` AND blocks.department_id = ?`;
+        query += ` AND b.department_id = ?`;
         params.push(department_id);
       }
 
       if (year_level_id) {
-        query += ` AND blocks.year_level_id = ?`;
+        query += ` AND b.year_level_id = ?`;
         params.push(year_level_id);
       }
 
@@ -617,8 +621,8 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         search_query.trim() !== ""
       ) {
         const likeQuery = `%${search_query.trim()}%`;
-        query += ` AND (blocks.name LIKE ? OR courses.code LIKE ?)`;
-        params.push(likeQuery, likeQuery);
+        query += ` AND (b.name LIKE ? OR c.code LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)`;
+        params.push(likeQuery, likeQuery, likeQuery, likeQuery);
       }
 
       const [rows] = await connection.query(query, params);
@@ -626,9 +630,9 @@ exports.fetchBlocksOfEvents = async (req, res) => {
       if (rows.length === 0) {
         return res.status(200).json({
           success: true,
-          message: "No matching data found.",
+          message: "No matching data found or no blocks with active students.",
           data: {
-            event_id: event_id,
+            event_id: Number(event_id),
             event_title: "Event Blocks",
             blocks: [],
           },
@@ -637,25 +641,58 @@ exports.fetchBlocksOfEvents = async (req, res) => {
 
       const event_title = rows[0].event_title;
 
-      const blocks = rows.map((row) => ({
-        block_id: row.block_id,
-        block_name: row.block_name,
-        course_code: row.course_code,
-        department_id: row.department_id,
-        year_level_id: row.year_level_id,
-      }));
+      const blockMap = {};
 
-      const result = {
+      for (const row of rows) {
+        if (!blockMap[row.block_id]) {
+          blockMap[row.block_id] = {
+            block_id: row.block_id,
+            block_name: row.block_name,
+            course_code: row.course_code,
+            department_id: row.department_id,
+            year_level_id: row.year_level_id,
+            status: row.block_status,
+            students: [],
+          };
+        }
+
+        if (row.student_id) {
+          blockMap[row.block_id].students.push({
+            student_id: row.student_id,
+            student_name: row.student_name,
+            am_in: row.am_in,
+            am_out: row.am_out,
+            pm_in: row.pm_in,
+            pm_out: row.pm_out,
+          });
+        }
+      }
+
+      const blocks = Object.values(blockMap).filter(
+        (block) => block.students.length > 0
+      );
+
+      if (blocks.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: "No blocks found with active students.",
+          data: {
+            event_id: Number(event_id),
+            event_title,
+            blocks: [],
+          },
+        });
+      }
+
+      return res.status(200).json({
         success: true,
         message: "Event block data retrieved successfully.",
         data: {
-          event_id: event_id,
-          event_title: event_title,
-          blocks: blocks,
+          event_id: Number(event_id),
+          event_title,
+          blocks,
         },
-      };
-
-      return res.status(200).json(result);
+      });
     } catch (dbError) {
       return res.status(500).json({
         success: false,
@@ -693,15 +730,8 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
         [event_id, block_id]
       );
 
-      if (eventBlockCheck.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "The specified block is not associated with the event.",
-        });
-      }
-
       const [studentsInBlock] = await connection.query(
-        `SELECT COUNT(*) AS count FROM users WHERE block_id = ? AND status != 'Disabled'`,
+        `SELECT COUNT(*) AS count FROM users WHERE block_id = ? AND status = 'Active'`,
         [block_id]
       );
 
@@ -723,7 +753,7 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
 
         return res.status(200).json({
           success: true,
-          message: "No students found for the specified block.",
+          message: "No active students found for the specified block.",
           data: {
             event_id: Number(event_id),
             event_name:
@@ -775,10 +805,9 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
         JOIN courses c ON b.course_id = c.id
         JOIN departments d ON b.department_id = d.id
         JOIN year_levels y ON b.year_level_id = y.id
-        JOIN event_blocks eb ON eb.block_id = b.id AND eb.event_id = ?
-        JOIN event_dates ed ON ed.event_id = eb.event_id
+        JOIN event_dates ed ON ed.event_id = ?
         LEFT JOIN attendance a ON a.student_id_number = u.id_number AND a.event_date_id = ed.id
-        WHERE b.id = ?
+        WHERE b.id = ? AND u.status = 'Active'
       `;
 
       const params = [event_id, block_id];
@@ -843,10 +872,10 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
             ...(row.event_pm_out && { pm_out: row.event_pm_out }),
           },
           attendance: {
-            ...(Boolean(row.student_am_in) && { am_in: true }),
-            ...(Boolean(row.student_am_out) && { am_out: true }),
-            ...(Boolean(row.student_pm_in) && { pm_in: true }),
-            ...(Boolean(row.student_pm_out) && { pm_out: true }),
+            ...(row.student_am_in && { am_in: row.student_am_in }),
+            ...(row.student_am_out && { am_out: row.student_am_out }),
+            ...(row.student_pm_in && { pm_in: row.student_pm_in }),
+            ...(row.student_pm_out && { pm_out: row.student_pm_out }),
           },
         });
       });
@@ -862,7 +891,10 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
 
       const result = {
         success: true,
-        message: "Student attendance data retrieved successfully.",
+        message:
+          eventBlockCheck.length === 0
+            ? "Block was not found in event_blocks, but attendance records still exist."
+            : "Student attendance data retrieved successfully.",
         data: {
           event_id: Number(event_id),
           event_name:
@@ -916,14 +948,21 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
     const { event_id, block_id } = req.body;
 
     if (!event_id || !block_id) {
+      const errorMessage =
+        "Missing required parameters: event_id and block_id are required.";
+      console.log(`[${new Date().toISOString()}] ${errorMessage}`);
       return res.status(400).json({
         success: false,
-        message:
-          "Missing required parameters: event_id and block_id are required.",
+        message: errorMessage,
       });
     }
 
+    console.log(
+      `[${new Date().toISOString()}] Fetching attendance summary for event_id=${event_id}, block_id=${block_id}`
+    );
+
     const connection = await pool.getConnection();
+
     try {
       const query = `
         SELECT 
@@ -936,11 +975,36 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         JOIN event_blocks eb ON eb.block_id = b.id AND eb.event_id = ?
         JOIN event_dates ed ON ed.event_id = eb.event_id
         LEFT JOIN attendance a ON a.student_id_number = u.id_number AND a.event_date_id = ed.id
-        WHERE b.id = ?
+        WHERE b.id = ? AND u.status = 'Active'
         GROUP BY u.id_number, u.last_name, u.first_name, u.suffix
+        ORDER BY u.last_name, u.first_name
       `;
 
+      console.log(`[${new Date().toISOString()}] Executing SQL query...`);
+
       const [rows] = await connection.query(query, [event_id, block_id]);
+
+      if (rows.length === 0) {
+        console.log(
+          `[${new Date().toISOString()}] No active students found for event_id=${event_id}, block_id=${block_id}`
+        );
+        return res.status(200).json({
+          success: true,
+          message:
+            "No attendance records found for active students in this block.",
+          data: {
+            event_id: Number(event_id),
+            block_id: Number(block_id),
+            attendance_summary: [],
+          },
+        });
+      }
+
+      console.log(
+        `[${new Date().toISOString()}] Retrieved ${
+          rows.length
+        } active student records.`
+      );
 
       const attendanceSummary = rows.map((row) => ({
         student_id: row.student_id,
@@ -959,11 +1023,24 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         },
       };
 
+      console.log(
+        `[${new Date().toISOString()}] Successfully generated attendance summary.`
+      );
+
       return res.status(200).json(result);
     } finally {
       connection.release();
+      console.log(
+        `[${new Date().toISOString()}] Database connection released.`
+      );
     }
   } catch (error) {
+    console.error(
+      `[${new Date().toISOString()}] Error fetching attendance summary:`,
+      error.message
+    );
+    console.error("Stack trace:", error.stack);
+
     return res.status(500).json({
       success: false,
       message: "An error occurred while processing the request.",
@@ -977,11 +1054,18 @@ exports.getStudentAttSummary = async (req, res) => {
     const { event_id, student_id } = req.body;
 
     if (!event_id || !student_id) {
+      console.log(
+        `[${new Date().toISOString()}] Missing required parameters: event_id or student_id`
+      );
       return res.status(400).json({
         success: false,
         message: "Missing required parameters: event_id and student_id.",
       });
     }
+
+    console.log(
+      `[${new Date().toISOString()}] Fetching attendance summary for event_id=${event_id}, student_id=${student_id}`
+    );
 
     const connection = await pool.getConnection();
 
@@ -995,27 +1079,39 @@ exports.getStudentAttSummary = async (req, res) => {
       );
 
       if (eventRows.length === 0) {
+        console.log(
+          `[${new Date().toISOString()}] Event not found: event_id=${event_id}`
+        );
         return res
           .status(404)
           .json({ success: false, message: "Event not found." });
       }
 
       const eventName = eventRows[0].event_name;
+      console.log(`[${new Date().toISOString()}] Found event: ${eventName}`);
 
       const [studentRows] = await connection.query(
-        `SELECT CONCAT(last_name, ', ', first_name, IFNULL(CONCAT(' ', middle_name), ''), IFNULL(CONCAT(' ', suffix), '')) AS name
+        `SELECT 
+           CONCAT(last_name, ', ', first_name, IFNULL(CONCAT(' ', middle_name), ''), IFNULL(CONCAT(' ', suffix), '')) AS name
          FROM users
-         WHERE id_number = ?`,
+         WHERE id_number = ? AND status = 'Active'`,
         [student_id]
       );
 
       if (studentRows.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Student not found." });
+        console.log(
+          `[${new Date().toISOString()}] Student not found or not active: student_id=${student_id}`
+        );
+        return res.status(404).json({
+          success: false,
+          message: "Student not found or is not active.",
+        });
       }
 
       const studentName = studentRows[0].name;
+      console.log(
+        `[${new Date().toISOString()}] Found student: ${studentName}`
+      );
 
       const [eventDatesRows] = await connection.query(
         `SELECT id, event_date AS date, am_in, am_out, pm_in, pm_out
@@ -1023,6 +1119,16 @@ exports.getStudentAttSummary = async (req, res) => {
          WHERE event_id = ?`,
         [event_id]
       );
+
+      if (eventDatesRows.length === 0) {
+        console.log(
+          `[${new Date().toISOString()}] No event dates found for event_id=${event_id}`
+        );
+        return res.status(404).json({
+          success: false,
+          message: "No event dates found for the given event.",
+        });
+      }
 
       const eventDatesMap = eventDatesRows.reduce((map, eventDate) => {
         map[eventDate.id] = eventDate;
@@ -1070,6 +1176,10 @@ exports.getStudentAttSummary = async (req, res) => {
         attendanceSummary[date].total_count = totalCount;
       });
 
+      console.log(
+        `[${new Date().toISOString()}] Attendance summary generated successfully for student ${student_id} in event ${event_id}`
+      );
+
       return res.status(200).json({
         success: true,
         message: "Student attendance summary retrieved successfully.",
@@ -1084,7 +1194,12 @@ exports.getStudentAttSummary = async (req, res) => {
       connection.release();
     }
   } catch (error) {
-    console.error("Error fetching student attendance summary:", error);
+    console.error(
+      `[${new Date().toISOString()}] Error fetching student attendance summary:`,
+      error.message
+    );
+    console.error("Stack trace:", error.stack);
+
     return res.status(500).json({
       success: false,
       message: "An error occurred while processing the request.",
