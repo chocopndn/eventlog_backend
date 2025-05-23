@@ -44,9 +44,8 @@ exports.signup = async (req, res) => {
 
     const [userRecords] = await connection.query(
       `SELECT * FROM view_users 
-       WHERE id_number = ? AND first_name = ? AND (middle_name IS NULL OR middle_name = ?) 
-       AND last_name = ? AND (suffix IS NULL OR suffix = ?) AND department_id = ?`,
-      [id_number, first_name, middle_name, last_name, suffix, department_id]
+       WHERE id_number = ? AND first_name = ? AND last_name = ? AND department_id = ?`,
+      [id_number, first_name, last_name, department_id]
     );
 
     if (!userRecords.length) {
@@ -73,6 +72,19 @@ exports.signup = async (req, res) => {
     }
 
     if (user.status === "Unregistered") {
+      const middleNameMatch =
+        (user.middle_name === null && middle_name === null) ||
+        user.middle_name === middle_name;
+      const suffixMatch =
+        (user.suffix === null && suffix === null) || user.suffix === suffix;
+
+      if (!middleNameMatch || !suffixMatch) {
+        return res.status(400).json({
+          success: false,
+          message: "User data does not match.",
+        });
+      }
+
       const hashedPassword = await bcrypt.hash(password, 10);
 
       await connection.query(
