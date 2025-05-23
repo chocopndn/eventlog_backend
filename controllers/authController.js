@@ -74,10 +74,22 @@ exports.signup = async (req, res) => {
       const normalizeField = (field) =>
         field === "" || field === null || field === undefined ? null : field;
 
+      const normalizeSuffix = (suffix) => {
+        if (
+          !suffix ||
+          suffix === "" ||
+          suffix === null ||
+          suffix === undefined
+        ) {
+          return null;
+        }
+        return suffix.toLowerCase().replace(/\./g, "").trim();
+      };
+
       const dbMiddleName = normalizeField(user.middle_name);
       const reqMiddleName = normalizeField(middle_name);
-      const dbSuffix = normalizeField(user.suffix);
-      const reqSuffix = normalizeField(suffix);
+      const dbSuffix = normalizeSuffix(user.suffix);
+      const reqSuffix = normalizeSuffix(suffix);
 
       const dataMatches =
         user.first_name === first_name &&
