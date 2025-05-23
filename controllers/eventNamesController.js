@@ -21,34 +21,44 @@ exports.addEventName = async (req, res) => {
     });
   }
 
+  const connection = await pool.getConnection();
+
   try {
-    const [existingEvent] = await pool.query(
+    await connection.beginTransaction();
+
+    const [existingEvent] = await connection.query(
       "SELECT * FROM event_names WHERE name = ?",
       [name.trim()]
     );
 
     if (existingEvent.length > 0) {
+      await connection.rollback();
       return res.status(409).json({
         success: false,
         message: "Event name already exists.",
       });
     }
 
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       "INSERT INTO event_names (name) VALUES (?)",
       [name.trim()]
     );
+
+    await connection.commit();
 
     return res.status(201).json({
       success: true,
       eventName: { id: result.insertId, name: name.trim() },
     });
   } catch (error) {
+    await connection.rollback().catch(console.error);
     console.error(error);
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to add event name.",
     });
+  } finally {
+    connection.release();
   }
 };
 
