@@ -30,4 +30,8 @@ router
   .route("/student/summary")
   .post(attendanceController.getStudentAttSummary);
 
+router
+  .route("/event/summary")
+  .post(attendanceController.fetchAttendanceSummaryOfEvent);
+
 module.exports = router;

@@ -5,9 +5,6 @@ const moment = require("moment");
 exports.syncAttendance = async (req, res) => {
   try {
     const { attendanceData } = req.body;
-    console.log();
-
-    console.log(attendanceData);
 
     if (!Array.isArray(attendanceData)) {
       return res.status(400).json({
@@ -137,9 +134,6 @@ exports.syncAttendance = async (req, res) => {
           });
         }
       }
-
-      console.log("Synced records:", syncedRecords.length);
-      console.log("Failed records:", failedRecords.length);
 
       return res.status(200).json({
         success: true,
@@ -1286,6 +1280,186 @@ exports.getStudentAttSummary = async (req, res) => {
       connection.release();
     }
   } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while processing the request.",
+      error: error.message,
+    });
+  }
+};
+
+exports.fetchAttendanceSummaryOfEvent = async (req, res) => {
+  try {
+    const { event_id } = req.body;
+
+    if (!event_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required parameter: event_id.",
+      });
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      // Check if event exists
+      const [eventCheck] = await connection.query(
+        `SELECT en.name AS event_name, e.status AS event_status
+         FROM events e
+         JOIN event_names en ON e.event_name_id = en.id
+         WHERE e.id = ?`,
+        [event_id]
+      );
+
+      if (eventCheck.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Event not found.",
+        });
+      }
+
+      const eventName = eventCheck[0].event_name;
+      const eventStatus = eventCheck[0].event_status;
+
+      // Build base query with search functionality
+      let baseQuery = `
+        SELECT 
+          u.id_number,
+          CONCAT(u.last_name, ', ', u.first_name, 
+            IFNULL(CONCAT(' ', u.middle_name), ''), 
+            IFNULL(CONCAT(' ', u.suffix), '')) AS full_name,
+          b.name AS block_name,
+          d.code AS department_code,
+          ed.id AS event_date_id,
+          ed.am_in AS schedule_am_in,
+          ed.am_out AS schedule_am_out,
+          ed.pm_in AS schedule_pm_in,
+          ed.pm_out AS schedule_pm_out,
+          a.am_in AS att_am_in,
+          a.am_out AS att_am_out,
+          a.pm_in AS att_pm_in,
+          a.pm_out AS att_pm_out
+        FROM users u
+        JOIN blocks b ON u.block_id = b.id
+        JOIN departments d ON b.department_id = d.id
+        JOIN event_blocks eb ON eb.block_id = b.id AND eb.event_id = ?
+        JOIN event_dates ed ON ed.event_id = ?
+        LEFT JOIN attendance a ON a.student_id_number = u.id_number AND a.event_date_id = ed.id
+        WHERE u.status = 'Active'
+      `;
+
+      const params = [event_id, event_id];
+
+      // Changed ORDER BY to prioritize last name alphabetically
+      baseQuery += ` ORDER BY u.last_name, u.first_name, d.code, b.name`;
+
+      const [rows] = await connection.query(baseQuery, params);
+
+      if (rows.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: "No students found for this event.",
+          data: {
+            event_id: Number(event_id),
+            event_name: eventName,
+            event_status: eventStatus,
+            students: [],
+          },
+        });
+      }
+
+      // Process attendance data
+      const studentMap = new Map();
+
+      rows.forEach((row) => {
+        const key = row.id_number;
+
+        if (!studentMap.has(key)) {
+          studentMap.set(key, {
+            id_number: row.id_number,
+            full_name: row.full_name,
+            block_name: row.block_name,
+            department_code: row.department_code,
+            present_count: 0,
+            absent_count: 0,
+            total_sessions: 0,
+          });
+        }
+
+        const student = studentMap.get(key);
+
+        // Count required sessions for this date
+        let sessionsRequired = 0;
+        let sessionsAttended = 0;
+
+        // Check each session type - if scheduled but no attendance record, count as absent
+        if (row.schedule_am_in !== null && row.schedule_am_in !== undefined) {
+          sessionsRequired += 1;
+          if (row.att_am_in === 1) sessionsAttended += 1;
+        }
+        if (row.schedule_am_out !== null && row.schedule_am_out !== undefined) {
+          sessionsRequired += 1;
+          if (row.att_am_out === 1) sessionsAttended += 1;
+        }
+        if (row.schedule_pm_in !== null && row.schedule_pm_in !== undefined) {
+          sessionsRequired += 1;
+          if (row.att_pm_in === 1) sessionsAttended += 1;
+        }
+        if (row.schedule_pm_out !== null && row.schedule_pm_out !== undefined) {
+          sessionsRequired += 1;
+          if (row.att_pm_out === 1) sessionsAttended += 1;
+        }
+
+        // Update student totals
+        student.present_count += sessionsAttended;
+        student.absent_count += sessionsRequired - sessionsAttended;
+        student.total_sessions += sessionsRequired;
+      });
+
+      // Convert map to array and sort alphabetically by last name
+      const students = Array.from(studentMap.values()).sort((a, b) => {
+        // Extract last name from full_name (format: "Last, First Middle Suffix")
+        const lastNameA = a.full_name.split(",")[0].trim();
+        const lastNameB = b.full_name.split(",")[0].trim();
+
+        // Primary sort by last name
+        const lastNameComparison = lastNameA.localeCompare(lastNameB);
+        if (lastNameComparison !== 0) {
+          return lastNameComparison;
+        }
+
+        // Secondary sort by first name if last names are the same
+        const firstNameA = a.full_name.split(",")[1]
+          ? a.full_name.split(",")[1].trim().split(" ")[0]
+          : "";
+        const firstNameB = b.full_name.split(",")[1]
+          ? b.full_name.split(",")[1].trim().split(" ")[0]
+          : "";
+        return firstNameA.localeCompare(firstNameB);
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Event attendance summary retrieved successfully.",
+        data: {
+          event_id: Number(event_id),
+          event_name: eventName,
+          event_status: eventStatus,
+          students: students,
+        },
+      });
+    } catch (dbError) {
+      console.error("Database error:", dbError);
+      return res.status(500).json({
+        success: false,
+        message: "Database error while fetching event attendance summary.",
+        error: dbError.message,
+      });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error("An error occurred:", error);
     return res.status(500).json({
       success: false,
       message: "An error occurred while processing the request.",
