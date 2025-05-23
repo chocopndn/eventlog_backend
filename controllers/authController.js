@@ -42,20 +42,19 @@ exports.signup = async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    const [userRecords] = await connection.query(
-      `SELECT * FROM view_users 
-       WHERE id_number = ? AND first_name = ? AND last_name = ? AND department_id = ?`,
-      [id_number, first_name, last_name, department_id]
+    const [existingUser] = await connection.query(
+      `SELECT * FROM view_users WHERE id_number = ?`,
+      [id_number]
     );
 
-    if (!userRecords.length) {
+    if (!existingUser.length) {
       return res.status(400).json({
         success: false,
-        message: "User data does not match.",
+        message: "User ID not found.",
       });
     }
 
-    const user = userRecords[0];
+    const user = existingUser[0];
 
     if (user.status === "Active") {
       return res.status(400).json({
@@ -72,25 +71,54 @@ exports.signup = async (req, res) => {
     }
 
     if (user.status === "Unregistered") {
-      const middleNameMatch =
-        (user.middle_name === null && middle_name === null) ||
-        user.middle_name === middle_name;
-      const suffixMatch =
-        (user.suffix === null && suffix === null) || user.suffix === suffix;
+      const normalizeField = (field) =>
+        field === "" || field === null || field === undefined ? null : field;
 
-      if (!middleNameMatch || !suffixMatch) {
+      const dbMiddleName = normalizeField(user.middle_name);
+      const reqMiddleName = normalizeField(middle_name);
+      const dbSuffix = normalizeField(user.suffix);
+      const reqSuffix = normalizeField(suffix);
+
+      const dataMatches =
+        user.first_name === first_name &&
+        user.last_name === last_name &&
+        user.department_id === department_id &&
+        dbMiddleName === reqMiddleName &&
+        dbSuffix === reqSuffix;
+
+      if (!dataMatches) {
         return res.status(400).json({
           success: false,
-          message: "User data does not match.",
+          message: "User data does not match our records.",
+        });
+      }
+
+      const [emailCheck] = await connection.query(
+        `SELECT id_number, email FROM view_users WHERE email = ? AND id_number != ?`,
+        [email, id_number]
+      );
+
+      if (emailCheck.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already used.",
         });
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      await connection.query(
+      const [updateResult] = await connection.query(
         `UPDATE users SET email = ?, password_hash = ?, status = 'Active' WHERE id_number = ?`,
         [email, hashedPassword, id_number]
       );
+
+      if (updateResult.affectedRows === 0) {
+        await connection.rollback();
+        return res.status(500).json({
+          success: false,
+          message: "Failed to register user. Please try again.",
+        });
+      }
 
       await connection.commit();
 
@@ -99,6 +127,11 @@ exports.signup = async (req, res) => {
         message: "User account successfully registered.",
       });
     }
+
+    return res.status(400).json({
+      success: false,
+      message: `Invalid user status: ${user.status}`,
+    });
   } catch (error) {
     if (connection) await connection.rollback();
     return handleError(res, error);
