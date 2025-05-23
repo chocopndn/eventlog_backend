@@ -5,6 +5,7 @@ const moment = require("moment");
 exports.syncAttendance = async (req, res) => {
   try {
     const { attendanceData } = req.body;
+    console.log();
 
     console.log(attendanceData);
 
@@ -24,64 +25,94 @@ exports.syncAttendance = async (req, res) => {
         const {
           event_date_id,
           student_id_number,
-          block_id,
           am_in,
           am_out,
           pm_in,
           pm_out,
         } = record;
 
-        if (!event_date_id || !student_id_number || !block_id) {
+        if (!event_date_id || !student_id_number) {
           failedRecords.push({
             record,
             error:
-              "Missing required fields: event_date_id, student_id_number, and/or block_id.",
+              "Missing required fields: event_date_id and/or student_id_number.",
           });
           continue;
         }
 
         const numericEventDateId = parseInt(event_date_id);
         const numericStudentId = student_id_number;
-        const numericBlockId = parseInt(block_id);
 
-        if (isNaN(numericEventDateId) || isNaN(numericBlockId)) {
+        if (isNaN(numericEventDateId)) {
           failedRecords.push({
             record,
-            error: "Invalid event_date_id or block_id.",
+            error: "Invalid event_date_id.",
           });
           continue;
         }
 
+        const [userResult] = await connection.query(
+          `SELECT block_id FROM users WHERE id_number = ? AND status = 'Active'`,
+          [numericStudentId]
+        );
+
+        if (userResult.length === 0) {
+          failedRecords.push({
+            record,
+            error: "Student not found or not active.",
+          });
+          continue;
+        }
+
+        const numericBlockId = userResult[0].block_id;
+
         const selectQuery = `
           SELECT id FROM attendance
-          WHERE event_date_id = ? AND student_id_number = ? AND block_id = ?
+          WHERE event_date_id = ? AND student_id_number = ?
         `;
         const [rows] = await connection.query(selectQuery, [
           numericEventDateId,
           numericStudentId,
-          numericBlockId,
         ]);
 
         if (rows.length > 0) {
-          const updateQuery = `
-            UPDATE attendance
-            SET am_in = ?, am_out = ?, pm_in = ?, pm_out = ?
-            WHERE event_date_id = ? AND student_id_number = ? AND block_id = ?
-          `;
-          await connection.query(updateQuery, [
-            am_in || false,
-            am_out || false,
-            pm_in || false,
-            pm_out || false,
-            numericEventDateId,
-            numericStudentId,
-            numericBlockId,
-          ]);
+          let updateFields = [];
+          let updateValues = [];
+
+          if (am_in !== undefined) {
+            updateFields.push("am_in = ?");
+            updateValues.push(am_in || false);
+          }
+          if (am_out !== undefined) {
+            updateFields.push("am_out = ?");
+            updateValues.push(am_out || false);
+          }
+          if (pm_in !== undefined) {
+            updateFields.push("pm_in = ?");
+            updateValues.push(pm_in || false);
+          }
+          if (pm_out !== undefined) {
+            updateFields.push("pm_out = ?");
+            updateValues.push(pm_out || false);
+          }
+
+          if (updateFields.length > 0) {
+            const updateQuery = `
+              UPDATE attendance
+              SET ${updateFields.join(", ")}
+              WHERE event_date_id = ? AND student_id_number = ?
+            `;
+            updateValues.push(numericEventDateId, numericStudentId);
+
+            await connection.query(updateQuery, updateValues);
+          }
+
           syncedRecords.push({
             id: rows[0].id,
             event_date_id,
             student_id_number,
-            block_id,
+            block_id: numericBlockId,
+            action: "updated",
           });
         } else {
           const insertQuery = `
@@ -101,10 +132,14 @@ exports.syncAttendance = async (req, res) => {
             id: result.insertId,
             event_date_id,
             student_id_number,
-            block_id,
+            block_id: numericBlockId,
+            action: "inserted",
           });
         }
       }
+
+      console.log("Synced records:", syncedRecords.length);
+      console.log("Failed records:", failedRecords.length);
 
       return res.status(200).json({
         success: true,
@@ -116,6 +151,7 @@ exports.syncAttendance = async (req, res) => {
       console.error("Database error:", dbError);
       return res.status(500).json({
         message: "Database error while syncing attendance.",
+        error: dbError.message,
       });
     } finally {
       connection.release();
@@ -124,6 +160,7 @@ exports.syncAttendance = async (req, res) => {
     console.error("An error occurred:", error);
     return res.status(500).json({
       message: "An error occurred while processing the data.",
+      error: error.message,
     });
   }
 };
@@ -864,6 +901,18 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
 
       const studentMap = {};
 
+      // Helper function to format date without timezone issues
+      const formatDateToYYYYMMDD = (dateObj) => {
+        if (!dateObj) return "unknown";
+
+        const date = new Date(dateObj);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+
+        return `${year}-${month}-${day}`;
+      };
+
       rows.forEach((row) => {
         const studentKey = row.student_id;
 
@@ -884,9 +933,7 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
         }
 
         studentMap[studentKey].dates.push({
-          date: row.event_date
-            ? row.event_date.toISOString().split("T")[0]
-            : "unknown",
+          date: formatDateToYYYYMMDD(row.event_date),
           schedule: {
             ...(row.event_am_in && { am_in: row.event_am_in }),
             ...(row.event_am_out && { am_out: row.event_am_out }),
