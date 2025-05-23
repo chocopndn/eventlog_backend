@@ -6,6 +6,8 @@ exports.syncAttendance = async (req, res) => {
   try {
     const { attendanceData } = req.body;
 
+    console.log(attendanceData);
+
     if (!Array.isArray(attendanceData)) {
       return res.status(400).json({
         message: "Invalid attendance data format. Expected an array.",
@@ -585,13 +587,13 @@ exports.fetchBlocksOfEvents = async (req, res) => {
           eb.event_id,
           e.event_name_id,
           en.name AS event_title,
-          b.id AS block_id,
-          b.name AS block_name,
-          c.id AS course_id,
-          c.code AS course_code,
-          b.department_id,
-          b.year_level_id,
-          b.status AS block_status,
+          current_b.id AS block_id,
+          current_b.name AS block_name,
+          current_c.id AS course_id,
+          current_c.code AS course_code,
+          current_b.department_id,
+          current_b.year_level_id,
+          current_b.status AS block_status,
           u.id_number AS student_id,
           CONCAT(u.last_name, ', ', u.first_name, IFNULL(CONCAT(' ', u.middle_name), '')) AS student_name,
           att.am_in, 
@@ -599,13 +601,26 @@ exports.fetchBlocksOfEvents = async (req, res) => {
           att.pm_in, 
           att.pm_out
         FROM event_blocks eb
-        JOIN blocks b ON eb.block_id = b.id
+        JOIN blocks original_b ON eb.block_id = original_b.id
         JOIN events e ON eb.event_id = e.id
         JOIN event_names en ON e.event_name_id = en.id
-        JOIN courses c ON b.course_id = c.id
-        LEFT JOIN users u ON u.block_id = b.id AND u.status = 'Active'
+        
+        -- Find current active blocks that match the same department, course, year_level, and name as original blocks
+        JOIN blocks current_b ON (
+          current_b.department_id = original_b.department_id 
+          AND current_b.year_level_id = original_b.year_level_id
+          AND current_b.name = original_b.name
+          AND current_b.status = 'Active'
+        )
+        JOIN courses current_c ON current_b.course_id = current_c.id
+        
+        -- Get students from current active blocks
+        LEFT JOIN users u ON u.block_id = current_b.id AND u.status = 'Active'
+        
+        -- Get attendance records (could be from original block_id or current block_id)
         LEFT JOIN attendance att ON att.student_id_number = u.id_number
         LEFT JOIN event_dates ed ON ed.id = att.event_date_id AND ed.event_id = eb.event_id
+        
         WHERE e.status IN ('Approved', 'Archived')
           AND eb.event_id = ?
       `;
@@ -613,12 +628,12 @@ exports.fetchBlocksOfEvents = async (req, res) => {
       const params = [event_id];
 
       if (department_id) {
-        query += ` AND b.department_id = ?`;
+        query += ` AND current_b.department_id = ?`;
         params.push(department_id);
       }
 
       if (year_level_id) {
-        query += ` AND b.year_level_id = ?`;
+        query += ` AND current_b.year_level_id = ?`;
         params.push(year_level_id);
       }
 
@@ -628,7 +643,7 @@ exports.fetchBlocksOfEvents = async (req, res) => {
         search_query.trim() !== ""
       ) {
         const likeQuery = `%${search_query.trim()}%`;
-        query += ` AND (b.name LIKE ? OR c.code LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)`;
+        query += ` AND (current_b.name LIKE ? OR current_c.code LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)`;
         params.push(likeQuery, likeQuery, likeQuery, likeQuery);
       }
 

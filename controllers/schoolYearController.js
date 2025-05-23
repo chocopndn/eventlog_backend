@@ -176,6 +176,10 @@ async function changeSchoolYear(filePath) {
       semester,
     } = currentSemesterResult[0];
 
+    console.log("Populating attendance records before school year change...");
+    await populateAttendanceForCurrentSemester(connection, currentSemesterId);
+    console.log("Attendance population completed.");
+
     await connection.query(
       `UPDATE school_year_semesters SET status = 'Archived' WHERE id = ?`,
       [currentSemesterId]
@@ -227,7 +231,6 @@ async function changeSchoolYear(filePath) {
 
       let blockId = blockCache.get(blockKey);
       if (!blockId) {
-        // Check if block exists in DB
         const [blockResult] = await connection.query(
           `SELECT b.id FROM blocks b
            JOIN departments d ON b.department_id = d.id
@@ -240,7 +243,6 @@ async function changeSchoolYear(filePath) {
         if (blockResult.length > 0) {
           blockId = blockResult[0].id;
         } else {
-          // Get department id
           const [deptResult] = await connection.query(
             "SELECT id FROM departments WHERE code = ? LIMIT 1",
             [departmentCode]
@@ -248,7 +250,6 @@ async function changeSchoolYear(filePath) {
           if (deptResult.length === 0) continue;
           const departmentId = deptResult[0].id;
 
-          // Get course id
           const [courseResult] = await connection.query(
             "SELECT id FROM courses WHERE code = ? LIMIT 1",
             [courseCode]
@@ -256,14 +257,12 @@ async function changeSchoolYear(filePath) {
           if (courseResult.length === 0) continue;
           const courseId = courseResult[0].id;
 
-          // Verify year level exists
           const [yearLevelResult] = await connection.query(
             "SELECT id FROM year_levels WHERE id = ? LIMIT 1",
             [yearLevelId]
           );
           if (yearLevelResult.length === 0) continue;
 
-          // Insert new block
           const [insertBlockResult] = await connection.query(
             `INSERT INTO blocks (name, department_id, course_id, year_level_id, school_year_semester_id, status)
              VALUES (?, ?, ?, ?, ?, 'Active')`,
@@ -274,7 +273,6 @@ async function changeSchoolYear(filePath) {
         blockCache.set(blockKey, blockId);
       }
 
-      // Now insert or update user with this block
       const idNumber = row.id_number.trim();
       const firstName = (row.first_name || "").trim();
       const middleName = (row.middle_name || "").trim();
@@ -323,12 +321,116 @@ async function changeSchoolYear(filePath) {
     }
 
     await connection.query("COMMIT");
+    console.log("School year change completed successfully!");
   } catch (error) {
     await connection.query("ROLLBACK");
     throw error;
   } finally {
     connection.release();
   }
+}
+
+async function populateAttendanceForCurrentSemester(
+  connection,
+  currentSemesterId
+) {
+  const [eventsResult] = await connection.query(
+    `
+    SELECT e.id as event_id 
+    FROM events e 
+    WHERE e.school_year_semester_id = ? 
+    AND e.status = 'Approved'
+  `,
+    [currentSemesterId]
+  );
+
+  if (eventsResult.length === 0) {
+    console.log("No approved events found for current semester");
+    return;
+  }
+
+  let totalAttendanceRecordsCreated = 0;
+
+  for (const event of eventsResult) {
+    const eventId = event.event_id;
+
+    const [eventDatesResult] = await connection.query(
+      `
+      SELECT id as event_date_id 
+      FROM event_dates 
+      WHERE event_id = ?
+    `,
+      [eventId]
+    );
+
+    if (eventDatesResult.length === 0) {
+      continue;
+    }
+
+    const [studentsResult] = await connection.query(
+      `
+      SELECT DISTINCT u.id_number, u.block_id
+      FROM users u
+      JOIN blocks b ON u.block_id = b.id
+      WHERE b.school_year_semester_id = ?
+      AND u.status = 'Active'
+      AND u.role_id = (SELECT id FROM roles WHERE name = 'Student' LIMIT 1)
+    `,
+      [currentSemesterId]
+    );
+
+    if (studentsResult.length === 0) {
+      continue;
+    }
+
+    for (const student of studentsResult) {
+      const studentIdNumber = student.id_number;
+      const studentBlockId = student.block_id;
+
+      const [eventBlockConnection] = await connection.query(
+        `
+        SELECT COUNT(*) as is_connected
+        FROM event_blocks eb
+        WHERE eb.event_id = ? AND eb.block_id = ?
+      `,
+        [eventId, studentBlockId]
+      );
+
+      const isConnected = eventBlockConnection[0].is_connected > 0;
+
+      if (isConnected) {
+        for (const eventDate of eventDatesResult) {
+          const eventDateId = eventDate.event_date_id;
+
+          const [existingAttendanceResult] = await connection.query(
+            `
+            SELECT id 
+            FROM attendance 
+            WHERE event_date_id = ? AND student_id_number = ?
+            LIMIT 1
+          `,
+            [eventDateId, studentIdNumber]
+          );
+
+          if (existingAttendanceResult.length === 0) {
+            await connection.query(
+              `
+              INSERT INTO attendance (event_date_id, student_id_number, block_id, am_in, am_out, pm_in, pm_out)
+              VALUES (?, ?, ?, FALSE, FALSE, FALSE, FALSE)
+            `,
+              [eventDateId, studentIdNumber, studentBlockId]
+            );
+
+            totalAttendanceRecordsCreated++;
+          }
+        }
+      }
+    }
+  }
+
+  console.log(
+    `Created ${totalAttendanceRecordsCreated} new attendance records`
+  );
 }
 
 async function getCurrentSchoolYear(req, res) {

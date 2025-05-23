@@ -71,8 +71,12 @@ exports.signup = async (req, res) => {
     }
 
     if (user.status === "Unregistered") {
-      const normalizeField = (field) =>
-        field === "" || field === null || field === undefined ? null : field;
+      const normalizeField = (field) => {
+        if (field === "" || field === null || field === undefined) {
+          return null;
+        }
+        return typeof field === "string" ? field.trim() : field;
+      };
 
       const normalizeSuffix = (suffix) => {
         if (
@@ -86,14 +90,18 @@ exports.signup = async (req, res) => {
         return suffix.toLowerCase().replace(/\./g, "").trim();
       };
 
+      const dbFirstName = normalizeField(user.first_name);
+      const reqFirstName = normalizeField(first_name);
+      const dbLastName = normalizeField(user.last_name);
+      const reqLastName = normalizeField(last_name);
       const dbMiddleName = normalizeField(user.middle_name);
       const reqMiddleName = normalizeField(middle_name);
       const dbSuffix = normalizeSuffix(user.suffix);
       const reqSuffix = normalizeSuffix(suffix);
 
       const dataMatches =
-        user.first_name === first_name &&
-        user.last_name === last_name &&
+        dbFirstName === reqFirstName &&
+        dbLastName === reqLastName &&
         user.department_id === department_id &&
         dbMiddleName === reqMiddleName &&
         dbSuffix === reqSuffix;
