@@ -895,7 +895,6 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
 
       const studentMap = {};
 
-      // Helper function to format date without timezone issues
       const formatDateToYYYYMMDD = (dateObj) => {
         if (!dateObj) return "unknown";
 
@@ -1290,7 +1289,7 @@ exports.getStudentAttSummary = async (req, res) => {
 
 exports.fetchAttendanceSummaryOfEvent = async (req, res) => {
   try {
-    const { event_id } = req.body;
+    const { event_id, department_id, year_level_id } = req.body;
 
     if (!event_id) {
       return res.status(400).json({
@@ -1299,16 +1298,53 @@ exports.fetchAttendanceSummaryOfEvent = async (req, res) => {
       });
     }
 
+    const eventIdNum = Number(event_id);
+    if (isNaN(eventIdNum) || !Number.isInteger(eventIdNum) || eventIdNum < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid event_id provided.",
+      });
+    }
+
+    let departmentIdNum = null;
+    if (department_id !== undefined) {
+      departmentIdNum = Number(department_id);
+      if (
+        isNaN(departmentIdNum) ||
+        !Number.isInteger(departmentIdNum) ||
+        departmentIdNum < 1
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid department_id provided.",
+        });
+      }
+    }
+
+    let yearLevelIdNum = null;
+    if (year_level_id !== undefined) {
+      yearLevelIdNum = Number(year_level_id);
+      if (
+        isNaN(yearLevelIdNum) ||
+        !Number.isInteger(yearLevelIdNum) ||
+        yearLevelIdNum < 1
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid year_level_id provided.",
+        });
+      }
+    }
+
     const connection = await pool.getConnection();
 
     try {
-      // Check if event exists
       const [eventCheck] = await connection.query(
         `SELECT en.name AS event_name, e.status AS event_status
          FROM events e
          JOIN event_names en ON e.event_name_id = en.id
          WHERE e.id = ?`,
-        [event_id]
+        [eventIdNum]
       );
 
       if (eventCheck.length === 0) {
@@ -1321,15 +1357,21 @@ exports.fetchAttendanceSummaryOfEvent = async (req, res) => {
       const eventName = eventCheck[0].event_name;
       const eventStatus = eventCheck[0].event_status;
 
-      // Build base query with search functionality
       let baseQuery = `
         SELECT 
           u.id_number,
           CONCAT(u.last_name, ', ', u.first_name, 
             IFNULL(CONCAT(' ', u.middle_name), ''), 
             IFNULL(CONCAT(' ', u.suffix), '')) AS full_name,
+          b.id AS block_id,
           b.name AS block_name,
+          d.id AS department_id,
           d.code AS department_code,
+          d.name AS department_name,
+          b.year_level_id,
+          yl.name AS year_level_name,
+          c.code AS course_code,
+          c.name AS course_name,
           ed.id AS event_date_id,
           ed.am_in AS schedule_am_in,
           ed.am_out AS schedule_am_out,
@@ -1342,109 +1384,178 @@ exports.fetchAttendanceSummaryOfEvent = async (req, res) => {
         FROM users u
         JOIN blocks b ON u.block_id = b.id
         JOIN departments d ON b.department_id = d.id
+        JOIN courses c ON b.course_id = c.id
+        LEFT JOIN year_levels yl ON b.year_level_id = yl.id
         JOIN event_blocks eb ON eb.block_id = b.id AND eb.event_id = ?
         JOIN event_dates ed ON ed.event_id = ?
         LEFT JOIN attendance a ON a.student_id_number = u.id_number AND a.event_date_id = ed.id
         WHERE u.status = 'Active'
       `;
 
-      const params = [event_id, event_id];
+      const queryParams = [eventIdNum, eventIdNum];
 
-      // Changed ORDER BY to prioritize last name alphabetically
+      if (department_id !== undefined) {
+        baseQuery += ` AND d.id = ?`;
+        queryParams.push(departmentIdNum);
+      }
+
+      if (year_level_id !== undefined) {
+        baseQuery += ` AND b.year_level_id = ?`;
+        queryParams.push(yearLevelIdNum);
+      }
+
       baseQuery += ` ORDER BY u.last_name, u.first_name, d.code, b.name`;
 
-      const [rows] = await connection.query(baseQuery, params);
+      const [rows] = await connection.query(baseQuery, queryParams);
 
       if (rows.length === 0) {
         return res.status(200).json({
           success: true,
           message: "No students found for this event.",
           data: {
-            event_id: Number(event_id),
+            event_id: eventIdNum,
             event_name: eventName,
             event_status: eventStatus,
+            department_ids: [],
+            year_level_ids: [],
+            block_ids: [],
+            departments: [],
+            year_levels: [],
+            blocks: [],
             students: [],
           },
         });
       }
 
-      // Process attendance data
       const studentMap = new Map();
+      const departmentIdsSet = new Set();
+      const yearLevelIdsSet = new Set();
+      const blockIdsSet = new Set();
+      const departmentsMap = new Map();
+      const yearLevelsMap = new Map();
+      const blocksMap = new Map();
 
       rows.forEach((row) => {
         const key = row.id_number;
 
+        if (row.department_id) {
+          departmentIdsSet.add(row.department_id);
+          departmentsMap.set(row.department_id, {
+            id: row.department_id,
+            code: row.department_code,
+            name: row.department_name,
+          });
+        }
+
+        if (row.year_level_id) {
+          yearLevelIdsSet.add(row.year_level_id);
+          yearLevelsMap.set(row.year_level_id, {
+            id: row.year_level_id,
+            name: row.year_level_name,
+          });
+        }
+
+        if (row.block_id) {
+          blockIdsSet.add(row.block_id);
+          blocksMap.set(row.block_id, {
+            id: row.block_id,
+            name: row.block_name,
+            course_code: row.course_code,
+            course_name: row.course_name,
+            department_id: row.department_id,
+            department_code: row.department_code,
+            year_level_id: row.year_level_id,
+          });
+        }
+
         if (!studentMap.has(key)) {
+          const nameParts = row.full_name.split(",");
+          const lastName = nameParts[0].trim();
+          const firstName = nameParts[1]
+            ? nameParts[1].trim().split(" ")[0]
+            : "";
+
           studentMap.set(key, {
             id_number: row.id_number,
             full_name: row.full_name,
+            block_id: row.block_id,
             block_name: row.block_name,
+            course_code: row.course_code,
+            course_name: row.course_name,
+            department_id: row.department_id,
             department_code: row.department_code,
+            department_name: row.department_name,
+            year_level_id: row.year_level_id,
+            year_level_name: row.year_level_name,
             present_count: 0,
             absent_count: 0,
             total_sessions: 0,
+            last_name: lastName,
+            first_name: firstName,
           });
         }
 
         const student = studentMap.get(key);
 
-        // Count required sessions for this date
         let sessionsRequired = 0;
         let sessionsAttended = 0;
 
-        // Check each session type - if scheduled but no attendance record, count as absent
-        if (row.schedule_am_in !== null && row.schedule_am_in !== undefined) {
+        if (row.schedule_am_in != null) {
           sessionsRequired += 1;
           if (row.att_am_in === 1) sessionsAttended += 1;
         }
-        if (row.schedule_am_out !== null && row.schedule_am_out !== undefined) {
+        if (row.schedule_am_out != null) {
           sessionsRequired += 1;
           if (row.att_am_out === 1) sessionsAttended += 1;
         }
-        if (row.schedule_pm_in !== null && row.schedule_pm_in !== undefined) {
+        if (row.schedule_pm_in != null) {
           sessionsRequired += 1;
           if (row.att_pm_in === 1) sessionsAttended += 1;
         }
-        if (row.schedule_pm_out !== null && row.schedule_pm_out !== undefined) {
+        if (row.schedule_pm_out != null) {
           sessionsRequired += 1;
           if (row.att_pm_out === 1) sessionsAttended += 1;
         }
 
-        // Update student totals
         student.present_count += sessionsAttended;
         student.absent_count += sessionsRequired - sessionsAttended;
         student.total_sessions += sessionsRequired;
       });
 
-      // Convert map to array and sort alphabetically by last name
       const students = Array.from(studentMap.values()).sort((a, b) => {
-        // Extract last name from full_name (format: "Last, First Middle Suffix")
-        const lastNameA = a.full_name.split(",")[0].trim();
-        const lastNameB = b.full_name.split(",")[0].trim();
-
-        // Primary sort by last name
-        const lastNameComparison = lastNameA.localeCompare(lastNameB);
-        if (lastNameComparison !== 0) {
-          return lastNameComparison;
-        }
-
-        // Secondary sort by first name if last names are the same
-        const firstNameA = a.full_name.split(",")[1]
-          ? a.full_name.split(",")[1].trim().split(" ")[0]
-          : "";
-        const firstNameB = b.full_name.split(",")[1]
-          ? b.full_name.split(",")[1].trim().split(" ")[0]
-          : "";
-        return firstNameA.localeCompare(firstNameB);
+        const lastNameComparison = a.last_name.localeCompare(b.last_name);
+        return lastNameComparison !== 0
+          ? lastNameComparison
+          : a.first_name.localeCompare(b.first_name);
       });
+
+      const departmentIds = Array.from(departmentIdsSet).sort((a, b) => a - b);
+      const yearLevelIds = Array.from(yearLevelIdsSet).sort((a, b) => a - b);
+      const blockIds = Array.from(blockIdsSet).sort((a, b) => a - b);
+
+      const departments = Array.from(departmentsMap.values()).sort((a, b) =>
+        a.code.localeCompare(b.code)
+      );
+      const yearLevels = Array.from(yearLevelsMap.values()).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+      const blocks = Array.from(blocksMap.values()).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
 
       return res.status(200).json({
         success: true,
         message: "Event attendance summary retrieved successfully.",
         data: {
-          event_id: Number(event_id),
+          event_id: eventIdNum,
           event_name: eventName,
           event_status: eventStatus,
+          department_ids: departmentIds,
+          year_level_ids: yearLevelIds,
+          block_ids: blockIds,
+          departments: departments,
+          year_levels: yearLevels,
+          blocks: blocks,
           students: students,
         },
       });
