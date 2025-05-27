@@ -48,9 +48,48 @@ exports.signup = async (req, res) => {
     );
 
     if (!existingUser.length) {
-      return res.status(400).json({
-        success: false,
-        message: "User ID not found.",
+      const [emailCheck] = await connection.query(
+        `SELECT id_number FROM view_users WHERE email = ?`,
+        [email]
+      );
+
+      if (emailCheck.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already used.",
+        });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const [insertResult] = await connection.query(
+        `INSERT INTO users (id_number, first_name, middle_name, last_name, suffix, email, password_hash, status) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'Not Enrolled')`,
+        [
+          id_number,
+          first_name,
+          middle_name,
+          last_name,
+          suffix,
+          email,
+          hashedPassword,
+        ]
+      );
+
+      if (insertResult.affectedRows === 0) {
+        await connection.rollback();
+        return res.status(500).json({
+          success: false,
+          message: "Failed to register user. Please try again.",
+        });
+      }
+
+      await connection.commit();
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "User account successfully registered with Not Enrolled status.",
       });
     }
 
@@ -198,6 +237,13 @@ exports.login = async (req, res) => {
         success: false,
         message:
           "Your account has been disabled. Please contact the administrator.",
+      });
+    }
+
+    if (account.status === "Not Enrolled") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is under review.",
       });
     }
 
