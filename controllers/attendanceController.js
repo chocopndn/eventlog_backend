@@ -1007,8 +1007,14 @@ exports.fetchStudentAttendanceByEventAndBlock = async (req, res) => {
 
 exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
   try {
-    const { event_id, block_id } = req.body;
-
+    const {
+      event_id,
+      block_id,
+      attendanceFilter = "all",
+      attendance_filter,
+    } = req.body;
+    const finalAttendanceFilter =
+      attendanceFilter || attendance_filter || "all";
     if (!event_id || !block_id) {
       return res.status(400).json({
         success: false,
@@ -1016,9 +1022,7 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           "Missing required parameters: event_id and block_id are required.",
       });
     }
-
     const connection = await pool.getConnection();
-
     try {
       const dateQuery = `
         SELECT 
@@ -1028,14 +1032,12 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         WHERE event_id = ?;
       `;
       const [dateRows] = await connection.query(dateQuery, [event_id]);
-
       const firstDate = dateRows[0].first_date
         ? dateRows[0].first_date.toISOString().split("T")[0]
         : null;
       const lastDate = dateRows[0].last_date
         ? dateRows[0].last_date.toISOString().split("T")[0]
         : null;
-
       const query = `
         SELECT 
           u.id_number AS student_id,
@@ -1058,9 +1060,7 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         WHERE b.id = ? AND u.status = 'Active'
         ORDER BY u.id_number, ed.event_date;
       `;
-
       const [rows] = await connection.query(query, [event_id, block_id]);
-
       if (rows.length === 0) {
         return res.status(200).json({
           success: true,
@@ -1075,12 +1075,9 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           },
         });
       }
-
       const studentMap = new Map();
-
       rows.forEach((row) => {
         const key = row.student_id;
-
         if (!studentMap.has(key)) {
           studentMap.set(key, {
             student_id: row.student_id,
@@ -1088,12 +1085,21 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
             present_count: 0,
             absent_count: 0,
             total_sessions: 0,
+            attendance_details: [],
+            am_in_attended: 0,
+            am_out_attended: 0,
+            pm_in_attended: 0,
+            pm_out_attended: 0,
+            am_in_total: 0,
+            am_out_total: 0,
+            pm_in_total: 0,
+            pm_out_total: 0,
           });
         }
-
         const student = studentMap.get(key);
-
         const {
+          date_id,
+          event_date,
           date_am_in,
           date_am_out,
           date_pm_in,
@@ -1103,31 +1109,107 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           att_pm_in,
           att_pm_out,
         } = row;
-
         let sessionsRequired = 0;
         let sessionsAttended = 0;
-
-        if (date_am_in !== null && date_am_in !== undefined)
+        if (date_am_in !== null && date_am_in !== undefined) {
           sessionsRequired += 1;
-        if (date_am_out !== null && date_am_out !== undefined)
+          student.am_in_total += 1;
+        }
+        if (date_am_out !== null && date_am_out !== undefined) {
           sessionsRequired += 1;
-        if (date_pm_in !== null && date_pm_in !== undefined)
+          student.am_out_total += 1;
+        }
+        if (date_pm_in !== null && date_pm_in !== undefined) {
           sessionsRequired += 1;
-        if (date_pm_out !== null && date_pm_out !== undefined)
+          student.pm_in_total += 1;
+        }
+        if (date_pm_out !== null && date_pm_out !== undefined) {
           sessionsRequired += 1;
-
-        if (att_am_in) sessionsAttended += 1;
-        if (att_am_out) sessionsAttended += 1;
-        if (att_pm_in) sessionsAttended += 1;
-        if (att_pm_out) sessionsAttended += 1;
-
+          student.pm_out_total += 1;
+        }
+        if (date_am_in !== null && date_am_in !== undefined) {
+          if (att_am_in === 1) {
+            sessionsAttended += 1;
+            student.am_in_attended += 1;
+          }
+        }
+        if (date_am_out !== null && date_am_out !== undefined) {
+          if (att_am_out === 1) {
+            sessionsAttended += 1;
+            student.am_out_attended += 1;
+          }
+        }
+        if (date_pm_in !== null && date_pm_in !== undefined) {
+          if (att_pm_in === 1) {
+            sessionsAttended += 1;
+            student.pm_in_attended += 1;
+          }
+        }
+        if (date_pm_out !== null && date_pm_out !== undefined) {
+          if (att_pm_out === 1) {
+            sessionsAttended += 1;
+            student.pm_out_attended += 1;
+          }
+        }
         student.present_count += sessionsAttended;
         student.absent_count += sessionsRequired - sessionsAttended;
         student.total_sessions += sessionsRequired;
+        student.attendance_details.push({
+          date_id: date_id,
+          event_date: event_date
+            ? event_date.toISOString().split("T")[0]
+            : null,
+          am_in:
+            att_am_in === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_am_in}`
+              : null,
+          am_out:
+            att_am_out === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_am_out}`
+              : null,
+          pm_in:
+            att_pm_in === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_pm_in}`
+              : null,
+          pm_out:
+            att_pm_out === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_pm_out}`
+              : null,
+          sessions_required: sessionsRequired,
+          sessions_attended: sessionsAttended,
+          am_in_attended: att_am_in === 1,
+          am_out_attended: att_am_out === 1,
+          pm_in_attended: att_pm_in === 1,
+          pm_out_attended: att_pm_out === 1,
+        });
       });
-
-      const attendanceSummary = Array.from(studentMap.values());
-
+      let attendanceSummary = Array.from(studentMap.values()).map(
+        (student) => ({
+          student_id: student.student_id,
+          student_name: student.student_name,
+          present_count: student.present_count,
+          absent_count: student.absent_count,
+          total_sessions: student.total_sessions,
+          attendance_details: student.attendance_details,
+          am_in_attended: student.am_in_attended,
+          am_out_attended: student.am_out_attended,
+          pm_in_attended: student.pm_in_attended,
+          pm_out_attended: student.pm_out_attended,
+          am_in_total: student.am_in_total,
+          am_out_total: student.am_out_total,
+          pm_in_total: student.pm_in_total,
+          pm_out_total: student.pm_out_total,
+        })
+      );
+      if (finalAttendanceFilter === "present") {
+        attendanceSummary = attendanceSummary.filter(
+          (student) => student.present_count > 0
+        );
+      } else if (finalAttendanceFilter === "absent") {
+        attendanceSummary = attendanceSummary.filter(
+          (student) => student.absent_count > 0
+        );
+      }
       const result = {
         success: true,
         message: "Attendance summary per block retrieved successfully.",
@@ -1139,7 +1221,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           attendance_summary: attendanceSummary,
         },
       };
-
       return res.status(200).json(result);
     } finally {
       connection.release();
