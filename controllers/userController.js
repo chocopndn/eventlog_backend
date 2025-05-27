@@ -237,6 +237,20 @@ exports.disableUser = async (req, res) => {
   try {
     connection = await pool.getConnection();
 
+    const [userResult] = await connection.query(
+      "SELECT id_number, email, first_name, last_name FROM users WHERE id_number = ?",
+      [id_number]
+    );
+
+    if (userResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    const user = userResult[0];
+
     const [result] = await connection.query(
       "UPDATE users SET status = 'Disabled' WHERE id_number = ?",
       [id_number]
@@ -249,9 +263,24 @@ exports.disableUser = async (req, res) => {
       });
     }
 
+    const io = req.app.get("io");
+
+    if (io) {
+      const eventData = {
+        userId: id_number.toString(),
+        id_number: id_number.toString(),
+        email: user.email,
+        name: `${user.first_name} ${user.last_name}`,
+        timestamp: new Date(),
+      };
+
+      io.emit("user-disabled", eventData);
+    }
+
     return res.status(200).json({
       success: true,
       message: "User disabled successfully.",
+      user: user,
     });
   } catch (error) {
     return handleError(res, error);

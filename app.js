@@ -1,10 +1,24 @@
 const express = require("express");
 const cors = require("cors");
+const http = require("http");
+const socketIo = require("socket.io");
 require("dotenv").config();
+
 const app = express();
+const server = http.createServer(app);
+
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+});
 
 app.use(cors());
 app.use(express.json());
+
+app.set("io", io);
 
 const authRoutes = require("./routes/authRoute");
 const departmentRoutes = require("./routes/departmentRoute");
@@ -36,4 +50,48 @@ app.get("/", (req, res) => {
   res.send("API is running...");
 });
 
-module.exports = app;
+io.on("connection", (socket) => {
+  socket.on("join-room", (room) => {
+    socket.join(room);
+  });
+
+  socket.on("leave-room", (room) => {
+    socket.leave(room);
+  });
+
+  socket.on("attendance-update", (data) => {
+    socket.to(`event-${data.eventId}`).emit("attendance-updated", data);
+  });
+
+  socket.on("event-update", (data) => {
+    io.emit("event-updated", data);
+  });
+
+  socket.on("user-status-update", (data) => {
+    socket
+      .to(`department-${data.departmentId}`)
+      .emit("user-status-updated", data);
+  });
+
+  socket.on("send-notification", (data) => {
+    if (data.userId) {
+      socket.to(data.userId).emit("notification", data);
+    } else if (data.room) {
+      socket.to(data.room).emit("notification", data);
+    }
+  });
+
+  socket.on("disconnect", () => {});
+});
+
+const emitUpdate = (event, data, room = null) => {
+  if (room) {
+    io.to(room).emit(event, data);
+  } else {
+    io.emit(event, data);
+  }
+};
+
+global.emitUpdate = emitUpdate;
+
+module.exports = { app, server, io };
