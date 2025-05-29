@@ -231,7 +231,7 @@ exports.fetchUserOngoingEvents = async (req, res) => {
         baseQuery += ` AND event_name LIKE ?`;
       }
 
-      baseQuery += ` ORDER BY SUBSTRING_INDEX(event_dates, ',', 1) ASC`;
+      baseQuery += ` ORDER BY STR_TO_DATE(SUBSTRING_INDEX(event_dates, ',', 1), '%Y-%m-%d') ASC`;
 
       const paginatedQuery = `${baseQuery} LIMIT ? OFFSET ?`;
 
@@ -243,47 +243,89 @@ exports.fetchUserOngoingEvents = async (req, res) => {
 
       const [rows] = await connection.query(paginatedQuery, queryParams);
 
-      const filteredRows = rows.filter((row) => {
-        const eventDates = row.event_dates.split(",");
-        const firstDate = eventDates[0];
-        const lastDate = eventDates[eventDates.length - 1];
+      const parseEventDates = (eventDatesString) => {
+        if (!eventDatesString) return [];
 
-        return today >= firstDate && today <= lastDate;
+        const dates = eventDatesString
+          .split(",")
+          .map((date) => date.trim())
+          .filter(Boolean);
+        return dates
+          .map((dateStr) => {
+            const parsed = moment(
+              dateStr,
+              ["YYYY-MM-DD", "MM/DD/YYYY", "DD/MM/YYYY"],
+              true
+            );
+            return parsed.isValid() ? parsed.format("YYYY-MM-DD") : null;
+          })
+          .filter(Boolean);
+      };
+
+      const filteredRows = rows.filter((row) => {
+        const eventDates = parseEventDates(row.event_dates);
+
+        if (eventDates.length === 0) return false;
+
+        const sortedDates = eventDates.sort();
+        const firstDate = sortedDates[0];
+        const lastDate = sortedDates[sortedDates.length - 1];
+
+        return moment(today).isBetween(
+          moment(firstDate),
+          moment(lastDate),
+          "day",
+          "[]"
+        );
       });
 
       const formattedRows = await Promise.all(
         filteredRows.map(async (row) => {
-          const eventDates = row.event_dates.split(",");
-          const eventDateIds = row.event_date_ids.split(",").map(Number);
+          const eventDates = parseEventDates(row.event_dates);
+          const eventDateIds = row.event_date_ids
+            ? row.event_date_ids
+                .split(",")
+                .map((id) => parseInt(id.trim()))
+                .filter((id) => !isNaN(id))
+            : [];
 
-          const attendanceQuery = `
-            SELECT 
-              event_date_id,
-              am_in,
-              am_out,
-              pm_in,
-              pm_out
-            FROM 
-              attendance
-            WHERE 
-              student_id_number = ? AND FIND_IN_SET(event_date_id, ?) > 0
-          `;
-          const [attendanceRows] = await connection.query(attendanceQuery, [
-            id_number,
-            eventDateIds.join(","),
-          ]);
+          let attendanceMap = {};
 
-          const attendanceMap = {};
-          attendanceRows.forEach((record) => {
-            const dateIndex = eventDateIds.indexOf(record.event_date_id);
-            const date = eventDates[dateIndex];
-            attendanceMap[date] = {
-              am_in: record.am_in === 1,
-              am_out: record.am_out === 1,
-              pm_in: record.pm_in === 1,
-              pm_out: record.pm_out === 1,
-            };
-          });
+          if (eventDateIds.length > 0) {
+            const attendanceQuery = `
+              SELECT 
+                event_date_id,
+                am_in,
+                am_out,
+                pm_in,
+                pm_out
+              FROM 
+                attendance
+              WHERE 
+                student_id_number = ? AND event_date_id IN (${eventDateIds
+                  .map(() => "?")
+                  .join(",")})
+            `;
+
+            const attendanceParams = [id_number, ...eventDateIds];
+            const [attendanceRows] = await connection.query(
+              attendanceQuery,
+              attendanceParams
+            );
+
+            attendanceRows.forEach((record) => {
+              const dateIndex = eventDateIds.indexOf(record.event_date_id);
+              if (dateIndex >= 0 && dateIndex < eventDates.length) {
+                const date = eventDates[dateIndex];
+                attendanceMap[date] = {
+                  am_in: Boolean(record.am_in),
+                  am_out: Boolean(record.am_out),
+                  pm_in: Boolean(record.pm_in),
+                  pm_out: Boolean(record.pm_out),
+                };
+              }
+            });
+          }
 
           eventDates.forEach((date) => {
             if (!attendanceMap[date]) {
@@ -299,7 +341,8 @@ exports.fetchUserOngoingEvents = async (req, res) => {
           return {
             event_id: row.event_id,
             event_name: row.event_name,
-            attendance: [attendanceMap],
+            event_dates: eventDates,
+            attendance: attendanceMap,
           };
         })
       );
@@ -321,36 +364,56 @@ exports.fetchUserOngoingEvents = async (req, res) => {
       }
 
       const [countRows] = await connection.query(countQuery, countParams);
-      const totalRecords = countRows[0].total;
+
+      const totalRecords = rows.filter((row) => {
+        const eventDates = parseEventDates(row.event_dates);
+        if (eventDates.length === 0) return false;
+
+        const sortedDates = eventDates.sort();
+        const firstDate = sortedDates[0];
+        const lastDate = sortedDates[sortedDates.length - 1];
+
+        return moment(today).isBetween(
+          moment(firstDate),
+          moment(lastDate),
+          "day",
+          "[]"
+        );
+      }).length;
 
       return res.status(200).json({
         success: true,
         message: "Events fetched successfully.",
         pagination: {
-          page,
-          limit,
+          page: parseInt(page),
+          limit: parseInt(limit),
           totalRecords,
           totalPages: Math.ceil(totalRecords / limit),
         },
         events: formattedRows,
       });
     } catch (dbError) {
+      console.error("Database error:", dbError);
       return res.status(500).json({
         message: "Database error while fetching user events.",
+        error:
+          process.env.NODE_ENV === "development" ? dbError.message : undefined,
       });
     } finally {
       connection.release();
     }
   } catch (error) {
+    console.error("Server error:", error);
     return res.status(500).json({
       message: "An error occurred while processing the request.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
 
 exports.fetchUserPastEvents = async (req, res) => {
   try {
-    const { id_number, page = 1, limit = 10 } = req.body;
+    const { id_number, page = 1, limit = 10, search = "" } = req.body;
 
     if (!id_number) {
       return res.status(400).json({
@@ -377,7 +440,26 @@ exports.fetchUserPastEvents = async (req, res) => {
       const block_id = userRows[0].block_id;
       const offset = (page - 1) * limit;
 
-      const baseQuery = `
+      const parseEventDates = (eventDatesString) => {
+        if (!eventDatesString) return [];
+
+        const dates = eventDatesString
+          .split(",")
+          .map((date) => date.trim())
+          .filter(Boolean);
+        return dates
+          .map((dateStr) => {
+            const parsed = moment(
+              dateStr,
+              ["YYYY-MM-DD", "MM/DD/YYYY", "DD/MM/YYYY"],
+              true
+            );
+            return parsed.isValid() ? parsed.format("YYYY-MM-DD") : null;
+          })
+          .filter(Boolean);
+      };
+
+      let baseQuery = `
         SELECT 
           event_id,
           event_name,
@@ -387,51 +469,72 @@ exports.fetchUserPastEvents = async (req, res) => {
           view_events
         WHERE 
           FIND_IN_SET(?, block_ids) > 0
-          AND status = 'Archived' 
-        ORDER BY 
-          SUBSTRING_INDEX(event_dates, ',', 1) ASC 
+          AND status = 'Archived'
       `;
 
+      if (search.trim() !== "") {
+        baseQuery += ` AND event_name LIKE ?`;
+      }
+
+      baseQuery += ` ORDER BY STR_TO_DATE(SUBSTRING_INDEX(event_dates, ',', -1), '%Y-%m-%d') DESC`;
+
       const paginatedQuery = `${baseQuery} LIMIT ? OFFSET ?`;
-      const [rows] = await connection.query(paginatedQuery, [
-        block_id,
-        limit,
-        offset,
-      ]);
+
+      const queryParams = [block_id];
+      if (search.trim() !== "") {
+        queryParams.push(`%${search}%`);
+      }
+      queryParams.push(limit, offset);
+
+      const [rows] = await connection.query(paginatedQuery, queryParams);
 
       const formattedRows = await Promise.all(
         rows.map(async (row) => {
-          const eventDates = row.event_dates.split(",");
-          const eventDateIds = row.event_date_ids.split(",").map(Number);
+          const eventDates = parseEventDates(row.event_dates);
+          const eventDateIds = row.event_date_ids
+            ? row.event_date_ids
+                .split(",")
+                .map((id) => parseInt(id.trim()))
+                .filter((id) => !isNaN(id))
+            : [];
 
-          const attendanceQuery = `
-            SELECT 
-              event_date_id,
-              am_in,
-              am_out,
-              pm_in,
-              pm_out
-            FROM 
-              attendance
-            WHERE 
-              student_id_number = ? AND FIND_IN_SET(event_date_id, ?) > 0
-          `;
-          const [attendanceRows] = await connection.query(attendanceQuery, [
-            id_number,
-            eventDateIds.join(","),
-          ]);
+          let attendanceMap = {};
 
-          const attendanceMap = {};
-          attendanceRows.forEach((record) => {
-            const dateIndex = eventDateIds.indexOf(record.event_date_id);
-            const date = eventDates[dateIndex];
-            attendanceMap[date] = {
-              am_in: record.am_in === 1,
-              am_out: record.am_out === 1,
-              pm_in: record.pm_in === 1,
-              pm_out: record.pm_out === 1,
-            };
-          });
+          if (eventDateIds.length > 0) {
+            const attendanceQuery = `
+              SELECT 
+                event_date_id,
+                am_in,
+                am_out,
+                pm_in,
+                pm_out
+              FROM 
+                attendance
+              WHERE 
+                student_id_number = ? AND event_date_id IN (${eventDateIds
+                  .map(() => "?")
+                  .join(",")})
+            `;
+
+            const attendanceParams = [id_number, ...eventDateIds];
+            const [attendanceRows] = await connection.query(
+              attendanceQuery,
+              attendanceParams
+            );
+
+            attendanceRows.forEach((record) => {
+              const dateIndex = eventDateIds.indexOf(record.event_date_id);
+              if (dateIndex >= 0 && dateIndex < eventDates.length) {
+                const date = eventDates[dateIndex];
+                attendanceMap[date] = {
+                  am_in: Boolean(record.am_in),
+                  am_out: Boolean(record.am_out),
+                  pm_in: Boolean(record.pm_in),
+                  pm_out: Boolean(record.pm_out),
+                };
+              }
+            });
+          }
 
           eventDates.forEach((date) => {
             if (!attendanceMap[date]) {
@@ -447,41 +550,54 @@ exports.fetchUserPastEvents = async (req, res) => {
           return {
             event_id: row.event_id,
             event_name: row.event_name,
-            attendance: [attendanceMap],
+            event_dates: eventDates,
+            attendance: attendanceMap,
           };
         })
       );
 
-      const countQuery = `
+      let countQuery = `
         SELECT COUNT(*) AS total
         FROM view_events
         WHERE FIND_IN_SET(?, block_ids) > 0
           AND status = 'Archived'
       `;
-      const [countRows] = await connection.query(countQuery, [block_id]);
+
+      const countParams = [block_id];
+      if (search.trim() !== "") {
+        countQuery += ` AND event_name LIKE ?`;
+        countParams.push(`%${search}%`);
+      }
+
+      const [countRows] = await connection.query(countQuery, countParams);
       const totalRecords = countRows[0].total;
 
       return res.status(200).json({
         success: true,
-        message: "Events fetched successfully.",
+        message: "Past events fetched successfully.",
         pagination: {
-          page,
-          limit,
+          page: parseInt(page),
+          limit: parseInt(limit),
           totalRecords,
           totalPages: Math.ceil(totalRecords / limit),
         },
         events: formattedRows,
       });
     } catch (dbError) {
+      console.error("Database error:", dbError);
       return res.status(500).json({
-        message: "Database error while fetching user events.",
+        message: "Database error while fetching past events.",
+        error:
+          process.env.NODE_ENV === "development" ? dbError.message : undefined,
       });
     } finally {
       connection.release();
     }
   } catch (error) {
+    console.error("Server error:", error);
     return res.status(500).json({
       message: "An error occurred while processing the request.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
