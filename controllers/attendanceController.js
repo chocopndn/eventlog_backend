@@ -1038,6 +1038,27 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
       const lastDate = dateRows[0].last_date
         ? dateRows[0].last_date.toISOString().split("T")[0]
         : null;
+
+      // Check which time periods exist in event_dates for this event
+      const timePeriodQuery = `
+        SELECT 
+          COUNT(CASE WHEN am_in IS NOT NULL THEN 1 END) AS has_am_in,
+          COUNT(CASE WHEN am_out IS NOT NULL THEN 1 END) AS has_am_out,
+          COUNT(CASE WHEN pm_in IS NOT NULL THEN 1 END) AS has_pm_in,
+          COUNT(CASE WHEN pm_out IS NOT NULL THEN 1 END) AS has_pm_out
+        FROM event_dates
+        WHERE event_id = ?;
+      `;
+      const [timePeriodRows] = await connection.query(timePeriodQuery, [
+        event_id,
+      ]);
+      const availableTimePeriods = {
+        hasAmIn: timePeriodRows[0].has_am_in > 0,
+        hasAmOut: timePeriodRows[0].has_am_out > 0,
+        hasPmIn: timePeriodRows[0].has_pm_in > 0,
+        hasPmOut: timePeriodRows[0].has_pm_out > 0,
+      };
+
       const query = `
         SELECT 
           u.id_number AS student_id,
@@ -1061,6 +1082,7 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         ORDER BY u.id_number, ed.event_date;
       `;
       const [rows] = await connection.query(query, [event_id, block_id]);
+
       if (rows.length === 0) {
         return res.status(200).json({
           success: true,
@@ -1071,31 +1093,47 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
             block_id: Number(block_id),
             first_event_date: firstDate,
             last_event_date: lastDate,
+            available_time_periods: availableTimePeriods,
             attendance_summary: [],
           },
         });
       }
+
       const studentMap = new Map();
       rows.forEach((row) => {
         const key = row.student_id;
         if (!studentMap.has(key)) {
-          studentMap.set(key, {
+          // Initialize student data with only the time periods that exist
+          const studentData = {
             student_id: row.student_id,
             student_name: row.student_name,
             present_count: 0,
             absent_count: 0,
             total_sessions: 0,
             attendance_details: [],
-            am_in_attended: 0,
-            am_out_attended: 0,
-            pm_in_attended: 0,
-            pm_out_attended: 0,
-            am_in_total: 0,
-            am_out_total: 0,
-            pm_in_total: 0,
-            pm_out_total: 0,
-          });
+          };
+
+          // Only add time period counts if they exist in event_dates
+          if (availableTimePeriods.hasAmIn) {
+            studentData.am_in_attended = 0;
+            studentData.am_in_total = 0;
+          }
+          if (availableTimePeriods.hasAmOut) {
+            studentData.am_out_attended = 0;
+            studentData.am_out_total = 0;
+          }
+          if (availableTimePeriods.hasPmIn) {
+            studentData.pm_in_attended = 0;
+            studentData.pm_in_total = 0;
+          }
+          if (availableTimePeriods.hasPmOut) {
+            studentData.pm_out_attended = 0;
+            studentData.pm_out_total = 0;
+          }
+
+          studentMap.set(key, studentData);
         }
+
         const student = studentMap.get(key);
         const {
           date_id,
@@ -1109,98 +1147,145 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           att_pm_in,
           att_pm_out,
         } = row;
+
         let sessionsRequired = 0;
         let sessionsAttended = 0;
-        if (date_am_in !== null && date_am_in !== undefined) {
+
+        // Only process time periods that exist in event_dates
+        if (
+          availableTimePeriods.hasAmIn &&
+          date_am_in !== null &&
+          date_am_in !== undefined
+        ) {
           sessionsRequired += 1;
           student.am_in_total += 1;
-        }
-        if (date_am_out !== null && date_am_out !== undefined) {
-          sessionsRequired += 1;
-          student.am_out_total += 1;
-        }
-        if (date_pm_in !== null && date_pm_in !== undefined) {
-          sessionsRequired += 1;
-          student.pm_in_total += 1;
-        }
-        if (date_pm_out !== null && date_pm_out !== undefined) {
-          sessionsRequired += 1;
-          student.pm_out_total += 1;
-        }
-        if (date_am_in !== null && date_am_in !== undefined) {
           if (att_am_in === 1) {
             sessionsAttended += 1;
             student.am_in_attended += 1;
           }
         }
-        if (date_am_out !== null && date_am_out !== undefined) {
+
+        if (
+          availableTimePeriods.hasAmOut &&
+          date_am_out !== null &&
+          date_am_out !== undefined
+        ) {
+          sessionsRequired += 1;
+          student.am_out_total += 1;
           if (att_am_out === 1) {
             sessionsAttended += 1;
             student.am_out_attended += 1;
           }
         }
-        if (date_pm_in !== null && date_pm_in !== undefined) {
+
+        if (
+          availableTimePeriods.hasPmIn &&
+          date_pm_in !== null &&
+          date_pm_in !== undefined
+        ) {
+          sessionsRequired += 1;
+          student.pm_in_total += 1;
           if (att_pm_in === 1) {
             sessionsAttended += 1;
             student.pm_in_attended += 1;
           }
         }
-        if (date_pm_out !== null && date_pm_out !== undefined) {
+
+        if (
+          availableTimePeriods.hasPmOut &&
+          date_pm_out !== null &&
+          date_pm_out !== undefined
+        ) {
+          sessionsRequired += 1;
+          student.pm_out_total += 1;
           if (att_pm_out === 1) {
             sessionsAttended += 1;
             student.pm_out_attended += 1;
           }
         }
+
         student.present_count += sessionsAttended;
         student.absent_count += sessionsRequired - sessionsAttended;
         student.total_sessions += sessionsRequired;
-        student.attendance_details.push({
+
+        // Build attendance details object with only available time periods
+        const attendanceDetail = {
           date_id: date_id,
           event_date: event_date
             ? event_date.toISOString().split("T")[0]
             : null,
-          am_in:
-            att_am_in === 1
-              ? `${event_date.toISOString().split("T")[0]}T${date_am_in}`
-              : null,
-          am_out:
-            att_am_out === 1
-              ? `${event_date.toISOString().split("T")[0]}T${date_am_out}`
-              : null,
-          pm_in:
-            att_pm_in === 1
-              ? `${event_date.toISOString().split("T")[0]}T${date_pm_in}`
-              : null,
-          pm_out:
-            att_pm_out === 1
-              ? `${event_date.toISOString().split("T")[0]}T${date_pm_out}`
-              : null,
           sessions_required: sessionsRequired,
           sessions_attended: sessionsAttended,
-          am_in_attended: att_am_in === 1,
-          am_out_attended: att_am_out === 1,
-          pm_in_attended: att_pm_in === 1,
-          pm_out_attended: att_pm_out === 1,
-        });
+        };
+
+        // Only add time fields that exist in event_dates
+        if (availableTimePeriods.hasAmIn) {
+          attendanceDetail.am_in =
+            att_am_in === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_am_in}`
+              : null;
+          attendanceDetail.am_in_attended = att_am_in === 1;
+        }
+
+        if (availableTimePeriods.hasAmOut) {
+          attendanceDetail.am_out =
+            att_am_out === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_am_out}`
+              : null;
+          attendanceDetail.am_out_attended = att_am_out === 1;
+        }
+
+        if (availableTimePeriods.hasPmIn) {
+          attendanceDetail.pm_in =
+            att_pm_in === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_pm_in}`
+              : null;
+          attendanceDetail.pm_in_attended = att_pm_in === 1;
+        }
+
+        if (availableTimePeriods.hasPmOut) {
+          attendanceDetail.pm_out =
+            att_pm_out === 1
+              ? `${event_date.toISOString().split("T")[0]}T${date_pm_out}`
+              : null;
+          attendanceDetail.pm_out_attended = att_pm_out === 1;
+        }
+
+        student.attendance_details.push(attendanceDetail);
       });
-      let attendanceSummary = Array.from(studentMap.values()).map(
-        (student) => ({
+
+      let attendanceSummary = Array.from(studentMap.values()).map((student) => {
+        // Build the response object with only available time periods
+        const summary = {
           student_id: student.student_id,
           student_name: student.student_name,
           present_count: student.present_count,
           absent_count: student.absent_count,
           total_sessions: student.total_sessions,
           attendance_details: student.attendance_details,
-          am_in_attended: student.am_in_attended,
-          am_out_attended: student.am_out_attended,
-          pm_in_attended: student.pm_in_attended,
-          pm_out_attended: student.pm_out_attended,
-          am_in_total: student.am_in_total,
-          am_out_total: student.am_out_total,
-          pm_in_total: student.pm_in_total,
-          pm_out_total: student.pm_out_total,
-        })
-      );
+        };
+
+        // Only include time period data if they exist in event_dates
+        if (availableTimePeriods.hasAmIn) {
+          summary.am_in_attended = student.am_in_attended;
+          summary.am_in_total = student.am_in_total;
+        }
+        if (availableTimePeriods.hasAmOut) {
+          summary.am_out_attended = student.am_out_attended;
+          summary.am_out_total = student.am_out_total;
+        }
+        if (availableTimePeriods.hasPmIn) {
+          summary.pm_in_attended = student.pm_in_attended;
+          summary.pm_in_total = student.pm_in_total;
+        }
+        if (availableTimePeriods.hasPmOut) {
+          summary.pm_out_attended = student.pm_out_attended;
+          summary.pm_out_total = student.pm_out_total;
+        }
+
+        return summary;
+      });
+
       if (finalAttendanceFilter === "present") {
         attendanceSummary = attendanceSummary.filter(
           (student) => student.present_count > 0
@@ -1210,6 +1295,7 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           (student) => student.absent_count > 0
         );
       }
+
       const result = {
         success: true,
         message: "Attendance summary per block retrieved successfully.",
@@ -1218,9 +1304,11 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           block_id: Number(block_id),
           first_event_date: firstDate,
           last_event_date: lastDate,
+          available_time_periods: availableTimePeriods,
           attendance_summary: attendanceSummary,
         },
       };
+
       return res.status(200).json(result);
     } finally {
       connection.release();
@@ -1281,6 +1369,26 @@ exports.getStudentAttSummary = async (req, res) => {
 
       const studentName = studentRows[0].name;
 
+      // Check which time periods exist in event_dates for this event
+      const timePeriodQuery = `
+        SELECT 
+          COUNT(CASE WHEN am_in IS NOT NULL THEN 1 END) AS has_am_in,
+          COUNT(CASE WHEN am_out IS NOT NULL THEN 1 END) AS has_am_out,
+          COUNT(CASE WHEN pm_in IS NOT NULL THEN 1 END) AS has_pm_in,
+          COUNT(CASE WHEN pm_out IS NOT NULL THEN 1 END) AS has_pm_out
+        FROM event_dates
+        WHERE event_id = ?;
+      `;
+      const [timePeriodRows] = await connection.query(timePeriodQuery, [
+        event_id,
+      ]);
+      const availableTimePeriods = {
+        hasAmIn: timePeriodRows[0].has_am_in > 0,
+        hasAmOut: timePeriodRows[0].has_am_out > 0,
+        hasPmIn: timePeriodRows[0].has_pm_in > 0,
+        hasPmOut: timePeriodRows[0].has_pm_out > 0,
+      };
+
       const [eventDatesRows] = await connection.query(
         `SELECT id, DATE_FORMAT(event_date, '%Y-%m-%d') AS date, am_in, am_out, pm_in, pm_out
          FROM event_dates
@@ -1321,22 +1429,64 @@ exports.getStudentAttSummary = async (req, res) => {
             absent_count: 0,
             total_count: 0,
           };
+
+          // Only add time period counts if they exist in event_dates
+          if (availableTimePeriods.hasAmIn) {
+            attendanceSummary[date].am_in_attended = 0;
+            attendanceSummary[date].am_in_total = 0;
+          }
+          if (availableTimePeriods.hasAmOut) {
+            attendanceSummary[date].am_out_attended = 0;
+            attendanceSummary[date].am_out_total = 0;
+          }
+          if (availableTimePeriods.hasPmIn) {
+            attendanceSummary[date].pm_in_attended = 0;
+            attendanceSummary[date].pm_in_total = 0;
+          }
+          if (availableTimePeriods.hasPmOut) {
+            attendanceSummary[date].pm_out_attended = 0;
+            attendanceSummary[date].pm_out_total = 0;
+          }
         }
 
-        const totalCount =
-          (eventDate.am_in !== null ? 1 : 0) +
-          (eventDate.am_out !== null ? 1 : 0) +
-          (eventDate.pm_in !== null ? 1 : 0) +
-          (eventDate.pm_out !== null ? 1 : 0);
+        // Calculate total count based on available time periods only
+        let totalCount = 0;
+        if (availableTimePeriods.hasAmIn && eventDate.am_in !== null) {
+          totalCount += 1;
+          attendanceSummary[date].am_in_total = 1;
+        }
+        if (availableTimePeriods.hasAmOut && eventDate.am_out !== null) {
+          totalCount += 1;
+          attendanceSummary[date].am_out_total = 1;
+        }
+        if (availableTimePeriods.hasPmIn && eventDate.pm_in !== null) {
+          totalCount += 1;
+          attendanceSummary[date].pm_in_total = 1;
+        }
+        if (availableTimePeriods.hasPmOut && eventDate.pm_out !== null) {
+          totalCount += 1;
+          attendanceSummary[date].pm_out_total = 1;
+        }
 
+        // Calculate present count based on available time periods only
         let presentCount = 0;
-
         if (attendanceRecord) {
-          presentCount =
-            (attendanceRecord.am_in ? 1 : 0) +
-            (attendanceRecord.am_out ? 1 : 0) +
-            (attendanceRecord.pm_in ? 1 : 0) +
-            (attendanceRecord.pm_out ? 1 : 0);
+          if (availableTimePeriods.hasAmIn && attendanceRecord.am_in) {
+            presentCount += 1;
+            attendanceSummary[date].am_in_attended = 1;
+          }
+          if (availableTimePeriods.hasAmOut && attendanceRecord.am_out) {
+            presentCount += 1;
+            attendanceSummary[date].am_out_attended = 1;
+          }
+          if (availableTimePeriods.hasPmIn && attendanceRecord.pm_in) {
+            presentCount += 1;
+            attendanceSummary[date].pm_in_attended = 1;
+          }
+          if (availableTimePeriods.hasPmOut && attendanceRecord.pm_out) {
+            presentCount += 1;
+            attendanceSummary[date].pm_out_attended = 1;
+          }
         }
 
         const absentCount = totalCount - presentCount;
@@ -1353,6 +1503,7 @@ exports.getStudentAttSummary = async (req, res) => {
           event_name: eventName,
           student_id,
           student_name: studentName,
+          available_time_periods: availableTimePeriods,
           attendance_summary: attendanceSummary,
         },
       });

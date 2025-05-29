@@ -20,6 +20,11 @@ app.use(express.json());
 
 app.set("io", io);
 
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 const authRoutes = require("./routes/authRoute");
 const departmentRoutes = require("./routes/departmentRoute");
 const userRoutes = require("./routes/userRoute");
@@ -53,10 +58,21 @@ app.get("/", (req, res) => {
 io.on("connection", (socket) => {
   socket.on("join-room", (room) => {
     socket.join(room);
+    socket.emit("room-joined", {
+      room,
+      message: `Successfully joined ${room}`,
+    });
   });
 
   socket.on("leave-room", (room) => {
     socket.leave(room);
+  });
+
+  socket.on("test-connection", () => {
+    socket.emit("test-response", {
+      message: "Connection working!",
+      timestamp: new Date(),
+    });
   });
 
   socket.on("attendance-update", (data) => {
@@ -81,7 +97,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {});
+  socket.on("disconnect", (reason) => {});
 });
 
 const emitUpdate = (event, data, room = null) => {

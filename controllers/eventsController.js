@@ -1,7 +1,7 @@
 const { pool } = require("../config/db");
 
 exports.getUpcomingEvents = async (req, res) => {
-  const { block_id, page = 1, limit = 10 } = req.body;
+  const { block_id } = req.body;
 
   if (block_id && isNaN(block_id)) {
     return res.status(400).json({
@@ -68,7 +68,6 @@ exports.getUpcomingEvents = async (req, res) => {
 
           const blockIds = JSON.parse(event.block_ids);
           const departmentIds = event.department_ids.split(",").map(String);
-
           const eventDateIds = JSON.parse(event.event_date_ids);
 
           return {
@@ -86,23 +85,38 @@ exports.getUpcomingEvents = async (req, res) => {
       })
       .filter(Boolean);
 
-    const offset = (page - 1) * limit;
-    const paginatedEvents = formattedEvents.slice(offset, offset + limit);
+    const response = {
+      success: true,
+      events: formattedEvents,
+      total: formattedEvents.length,
+    };
 
-    if (paginatedEvents.length === 0) {
-      return res.json({
-        success: true,
-        message: "No upcoming events found",
-        events: [],
-        total: 0,
+    if (formattedEvents.length === 0) {
+      response.message = "No upcoming events found";
+      response.events = [];
+      response.total = 0;
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      if (block_id) {
+        io.to(`block-${block_id}`).emit("upcoming-events-updated", {
+          block_id,
+          events: formattedEvents,
+          total: formattedEvents.length,
+          timestamp: new Date(),
+        });
+      }
+
+      io.emit("events-list-updated", {
+        type: "upcoming",
+        events: formattedEvents,
+        total: formattedEvents.length,
+        timestamp: new Date(),
       });
     }
 
-    return res.json({
-      success: true,
-      events: paginatedEvents,
-      total: filteredEvents.length,
-    });
+    return res.json(response);
   } catch (error) {
     console.error("Error fetching upcoming events:", error.message);
     return res
@@ -167,7 +181,7 @@ exports.addEvent = async (req, res) => {
     const school_year_semester_id = schoolYearSemesterRows[0].id;
 
     const [existingEventNameRows] = await db.query(
-      `SELECT id FROM event_names WHERE id = ?`,
+      `SELECT id, name FROM event_names WHERE id = ?`,
       [event_name_id]
     );
     if (!existingEventNameRows || existingEventNameRows.length === 0) {
@@ -176,7 +190,7 @@ exports.addEvent = async (req, res) => {
     }
 
     const [existingAdminRows] = await db.query(
-      `SELECT id_number, role_id FROM admins WHERE id_number = ?`,
+      `SELECT id_number, role_id, first_name, last_name FROM admins WHERE id_number = ?`,
       [created_by]
     );
     if (!existingAdminRows || existingAdminRows.length === 0) {
@@ -184,6 +198,7 @@ exports.addEvent = async (req, res) => {
       return res.status(400).json({ message: "Invalid admin ID." });
     }
     const isAdminRole4 = existingAdminRows[0].role_id === 4;
+    const adminInfo = existingAdminRows[0];
 
     const uniqueDates = [...new Set(eventDates)].sort();
     const uniqueBlocks = [...new Set(blockIds.map(String))].sort();
@@ -262,12 +277,106 @@ exports.addEvent = async (req, res) => {
 
     await db.commit();
 
+    if (isAdminRole4) {
+      const [newEventData] = await db.query(
+        `SELECT 
+          e.id as event_id,
+          e.event_name_id,
+          en.name as event_name,
+          e.venue,
+          e.description,
+          e.status,
+          e.created_by,
+          e.scan_personnel,
+          GROUP_CONCAT(DISTINCT DATE_FORMAT(ed.event_date, '%Y-%m-%d') ORDER BY ed.event_date) as event_dates,
+          GROUP_CONCAT(DISTINCT eb.block_id ORDER BY eb.block_id) as block_ids,
+          MAX(ed.am_in) as am_in,
+          MAX(ed.am_out) as am_out,
+          MAX(ed.pm_in) as pm_in,
+          MAX(ed.pm_out) as pm_out,
+          MAX(ed.duration) as duration
+        FROM events e
+        JOIN event_names en ON e.event_name_id = en.id
+        LEFT JOIN event_dates ed ON e.id = ed.event_id
+        LEFT JOIN event_blocks eb ON e.id = eb.event_id
+        WHERE e.id = ?
+        GROUP BY e.id, e.event_name_id, en.name, e.venue, e.description, e.status, e.created_by, e.scan_personnel`,
+        [eventId]
+      );
+
+      if (newEventData && newEventData.length > 0) {
+        const eventData = {
+          ...newEventData[0],
+          event_dates: newEventData[0].event_dates
+            ? newEventData[0].event_dates.split(",")
+            : [],
+          block_ids: newEventData[0].block_ids
+            ? newEventData[0].block_ids.split(",").map((id) => parseInt(id))
+            : [],
+          created_by_name: `${adminInfo.first_name} ${adminInfo.last_name}`,
+          is_new_approved: true,
+        };
+
+        if (req.io) {
+          req.io.to("all-events").emit("newApprovedEvent", {
+            type: "EVENT_APPROVED",
+            data: eventData,
+            message: `New event "${eventData.event_name}" has been approved and added to the schedule`,
+            timestamp: new Date().toISOString(),
+          });
+
+          req.io.to("all-events").emit("new-event-added", {
+            event: eventData,
+            block_ids: uniqueBlocks.map((id) => parseInt(id)),
+            timestamp: new Date().toISOString(),
+          });
+
+          req.io.to("all-events").emit("events-list-updated", {
+            type: "upcoming",
+            events: [eventData],
+            total: 1,
+            timestamp: new Date(),
+          });
+
+          uniqueBlocks.forEach((block_id) => {
+            req.io.to(`block-${block_id}`).emit("newApprovedEvent", {
+              type: "EVENT_APPROVED",
+              data: eventData,
+              message: `New event "${eventData.event_name}" has been approved and added to the schedule`,
+              timestamp: new Date().toISOString(),
+            });
+
+            req.io.to(`block-${block_id}`).emit("upcoming-events-updated", {
+              block_id: parseInt(block_id),
+              events: [eventData],
+              total: 1,
+              timestamp: new Date(),
+            });
+
+            req.io.to(`block-${block_id}`).emit("new-event-added", {
+              event: eventData,
+              block_ids: uniqueBlocks.map((id) => parseInt(id)),
+              timestamp: new Date().toISOString(),
+            });
+          });
+
+          req.io.emit("events-list-updated", {
+            type: "upcoming",
+            events: [eventData],
+            total: 1,
+            timestamp: new Date(),
+          });
+        }
+      }
+    }
+
     return res.status(201).json({
       success: true,
       message: isAdminRole4
         ? "Event created and automatically approved successfully"
         : "Event created successfully",
       event_id: eventId,
+      auto_approved: isAdminRole4,
     });
   } catch (error) {
     console.error("Error adding event:", error);

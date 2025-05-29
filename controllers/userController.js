@@ -298,7 +298,6 @@ exports.addUser = async (req, res) => {
     middle_name,
     last_name,
     suffix,
-    email,
   } = req.body;
 
   if (!id_number || !role_id || !block_id || !first_name || !last_name) {
@@ -345,27 +344,11 @@ exports.addUser = async (req, res) => {
       });
     }
 
-    if (email) {
-      const [existingEmail] = await connection.query(
-        "SELECT * FROM users WHERE email = ?",
-        [email]
-      );
-      if (existingEmail.length > 0) {
-        return res.status(409).json({
-          success: false,
-          message: "A user with this email already exists.",
-        });
-      }
-    }
-
-    const password = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(password, 10);
-
     const query = `
       INSERT INTO users (
         id_number, role_id, block_id, first_name, middle_name, 
-        last_name, suffix, email, password_hash, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
+        last_name, suffix, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Unregistered')
     `;
 
     await connection.query(query, [
@@ -376,26 +359,30 @@ exports.addUser = async (req, res) => {
       middle_name || null,
       last_name,
       suffix || null,
-      email || null,
-      hashedPassword,
     ]);
-
-    if (email) {
-      sendCredentials(email, id_number, password);
-    }
 
     return res.status(201).json({
       success: true,
-      message: "User added successfully. Login credentials sent to email.",
+      message: "User added successfully.",
     });
   } catch (error) {
+    console.error("Error in addUser function:", {
+      message: error.message,
+      stack: error.stack,
+      requestBody: req.body,
+      timestamp: new Date().toISOString(),
+    });
+
     return res.status(500).json({
       success: false,
       message: "Failed to add user",
       error: error.message,
     });
   } finally {
-    if (connection) connection.release();
+    if (connection) {
+      connection.release();
+      console.log("Database connection released");
+    }
   }
 };
 

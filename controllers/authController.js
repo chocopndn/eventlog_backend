@@ -243,7 +243,7 @@ exports.login = async (req, res) => {
     if (account.status === "Not Enrolled") {
       return res.status(403).json({
         success: false,
-        message: "Your account is under review.",
+        message: "You are not enrolled.",
       });
     }
 
