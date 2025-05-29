@@ -61,7 +61,20 @@ exports.syncAttendance = async (req, res) => {
           continue;
         }
 
-        const numericBlockId = userResult[0].block_id;
+        const studentBlockId = userResult[0].block_id;
+
+        const [eventDateResult] = await connection.query(
+          `SELECT id FROM event_dates WHERE id = ?`,
+          [numericEventDateId]
+        );
+
+        if (eventDateResult.length === 0) {
+          failedRecords.push({
+            record,
+            error: "Event date not found.",
+          });
+          continue;
+        }
 
         const selectQuery = `
           SELECT id FROM attendance
@@ -78,20 +91,23 @@ exports.syncAttendance = async (req, res) => {
 
           if (am_in !== undefined) {
             updateFields.push("am_in = ?");
-            updateValues.push(am_in || false);
+            updateValues.push(Boolean(am_in));
           }
           if (am_out !== undefined) {
             updateFields.push("am_out = ?");
-            updateValues.push(am_out || false);
+            updateValues.push(Boolean(am_out));
           }
           if (pm_in !== undefined) {
             updateFields.push("pm_in = ?");
-            updateValues.push(pm_in || false);
+            updateValues.push(Boolean(pm_in));
           }
           if (pm_out !== undefined) {
             updateFields.push("pm_out = ?");
-            updateValues.push(pm_out || false);
+            updateValues.push(Boolean(pm_out));
           }
+
+          updateFields.push("block_id = ?");
+          updateValues.push(studentBlockId);
 
           if (updateFields.length > 0) {
             const updateQuery = `
@@ -106,9 +122,9 @@ exports.syncAttendance = async (req, res) => {
 
           syncedRecords.push({
             id: rows[0].id,
-            event_date_id,
-            student_id_number,
-            block_id: numericBlockId,
+            event_date_id: numericEventDateId,
+            student_id_number: numericStudentId,
+            block_id: studentBlockId,
             action: "updated",
           });
         } else {
@@ -119,17 +135,18 @@ exports.syncAttendance = async (req, res) => {
           const [result] = await connection.query(insertQuery, [
             numericEventDateId,
             numericStudentId,
-            numericBlockId,
-            am_in || false,
-            am_out || false,
-            pm_in || false,
-            pm_out || false,
+            studentBlockId,
+            Boolean(am_in || false),
+            Boolean(am_out || false),
+            Boolean(pm_in || false),
+            Boolean(pm_out || false),
           ]);
+
           syncedRecords.push({
             id: result.insertId,
-            event_date_id,
-            student_id_number,
-            block_id: numericBlockId,
+            event_date_id: numericEventDateId,
+            student_id_number: numericStudentId,
+            block_id: studentBlockId,
             action: "inserted",
           });
         }
@@ -138,12 +155,17 @@ exports.syncAttendance = async (req, res) => {
       return res.status(200).json({
         success: true,
         message: "Attendance sync completed.",
-        syncedRecords,
-        failedRecords,
+        data: {
+          synced_count: syncedRecords.length,
+          failed_count: failedRecords.length,
+          synced_records: syncedRecords,
+          failed_records: failedRecords,
+        },
       });
     } catch (dbError) {
       console.error("Database error:", dbError);
       return res.status(500).json({
+        success: false,
         message: "Database error while syncing attendance.",
         error: dbError.message,
       });
@@ -153,6 +175,7 @@ exports.syncAttendance = async (req, res) => {
   } catch (error) {
     console.error("An error occurred:", error);
     return res.status(500).json({
+      success: false,
       message: "An error occurred while processing the data.",
       error: error.message,
     });
@@ -1039,7 +1062,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         ? dateRows[0].last_date.toISOString().split("T")[0]
         : null;
 
-      // Check which time periods exist in event_dates for this event
       const timePeriodQuery = `
         SELECT 
           COUNT(CASE WHEN am_in IS NOT NULL THEN 1 END) AS has_am_in,
@@ -1103,7 +1125,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
       rows.forEach((row) => {
         const key = row.student_id;
         if (!studentMap.has(key)) {
-          // Initialize student data with only the time periods that exist
           const studentData = {
             student_id: row.student_id,
             student_name: row.student_name,
@@ -1113,7 +1134,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
             attendance_details: [],
           };
 
-          // Only add time period counts if they exist in event_dates
           if (availableTimePeriods.hasAmIn) {
             studentData.am_in_attended = 0;
             studentData.am_in_total = 0;
@@ -1151,7 +1171,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         let sessionsRequired = 0;
         let sessionsAttended = 0;
 
-        // Only process time periods that exist in event_dates
         if (
           availableTimePeriods.hasAmIn &&
           date_am_in !== null &&
@@ -1208,7 +1227,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
         student.absent_count += sessionsRequired - sessionsAttended;
         student.total_sessions += sessionsRequired;
 
-        // Build attendance details object with only available time periods
         const attendanceDetail = {
           date_id: date_id,
           event_date: event_date
@@ -1218,7 +1236,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           sessions_attended: sessionsAttended,
         };
 
-        // Only add time fields that exist in event_dates
         if (availableTimePeriods.hasAmIn) {
           attendanceDetail.am_in =
             att_am_in === 1
@@ -1255,7 +1272,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
       });
 
       let attendanceSummary = Array.from(studentMap.values()).map((student) => {
-        // Build the response object with only available time periods
         const summary = {
           student_id: student.student_id,
           student_name: student.student_name,
@@ -1265,7 +1281,6 @@ exports.fetchAttendanceSummaryPerBlock = async (req, res) => {
           attendance_details: student.attendance_details,
         };
 
-        // Only include time period data if they exist in event_dates
         if (availableTimePeriods.hasAmIn) {
           summary.am_in_attended = student.am_in_attended;
           summary.am_in_total = student.am_in_total;
@@ -1369,7 +1384,6 @@ exports.getStudentAttSummary = async (req, res) => {
 
       const studentName = studentRows[0].name;
 
-      // Check which time periods exist in event_dates for this event
       const timePeriodQuery = `
         SELECT 
           COUNT(CASE WHEN am_in IS NOT NULL THEN 1 END) AS has_am_in,
@@ -1430,7 +1444,6 @@ exports.getStudentAttSummary = async (req, res) => {
             total_count: 0,
           };
 
-          // Only add time period counts if they exist in event_dates
           if (availableTimePeriods.hasAmIn) {
             attendanceSummary[date].am_in_attended = 0;
             attendanceSummary[date].am_in_total = 0;
@@ -1449,7 +1462,6 @@ exports.getStudentAttSummary = async (req, res) => {
           }
         }
 
-        // Calculate total count based on available time periods only
         let totalCount = 0;
         if (availableTimePeriods.hasAmIn && eventDate.am_in !== null) {
           totalCount += 1;
@@ -1468,7 +1480,6 @@ exports.getStudentAttSummary = async (req, res) => {
           attendanceSummary[date].pm_out_total = 1;
         }
 
-        // Calculate present count based on available time periods only
         let presentCount = 0;
         if (attendanceRecord) {
           if (availableTimePeriods.hasAmIn && attendanceRecord.am_in) {
