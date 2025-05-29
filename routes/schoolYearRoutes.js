@@ -42,7 +42,6 @@ router.post("/update", upload.single("file"), async (req, res) => {
     await schoolYearController.updateStudents(req.file.path);
     res.status(200).json({ message: "Students updated successfully." });
   } catch (error) {
-    console.error("Error during updateStudents processing:", error);
     res.status(500).json({ error: "Failed to update students." });
   } finally {
     try {
@@ -63,7 +62,6 @@ router.post("/change-school-year", upload.single("file"), async (req, res) => {
     await schoolYearController.changeSchoolYear(req.file.path);
     res.status(200).json({ message: "School year changed successfully." });
   } catch (error) {
-    console.error("Error during changeSchoolYear processing:", error);
     res.status(500).json({ error: "Failed to change school year." });
   } finally {
     try {

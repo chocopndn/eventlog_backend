@@ -381,7 +381,6 @@ exports.addUser = async (req, res) => {
   } finally {
     if (connection) {
       connection.release();
-      console.log("Database connection released");
     }
   }
 };

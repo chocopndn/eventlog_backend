@@ -25,7 +25,7 @@ const archivePastEvents = async () => {
       eventIdsToArchive,
     ]);
   } catch (error) {
-    console.error("LOG: Error archiving past events:", error);
+    console.error(error);
   }
 };
 

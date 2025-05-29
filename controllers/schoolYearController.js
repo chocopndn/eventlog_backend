@@ -176,9 +176,7 @@ async function changeSchoolYear(filePath) {
       semester,
     } = currentSemesterResult[0];
 
-    console.log("Populating attendance records before school year change...");
     await populateAttendanceForCurrentSemester(connection, currentSemesterId);
-    console.log("Attendance population completed.");
 
     await connection.query(
       `UPDATE school_year_semesters SET status = 'Archived' WHERE id = ?`,
@@ -321,7 +319,6 @@ async function changeSchoolYear(filePath) {
     }
 
     await connection.query("COMMIT");
-    console.log("School year change completed successfully!");
   } catch (error) {
     await connection.query("ROLLBACK");
     throw error;
@@ -345,7 +342,6 @@ async function populateAttendanceForCurrentSemester(
   );
 
   if (eventsResult.length === 0) {
-    console.log("No approved events found for current semester");
     return;
   }
 
@@ -427,20 +423,12 @@ async function populateAttendanceForCurrentSemester(
       }
     }
   }
-
-  console.log(
-    `Created ${totalAttendanceRecordsCreated} new attendance records`
-  );
 }
 
 async function getCurrentSchoolYear(req, res) {
   const connection = await pool.getConnection();
 
   try {
-    console.log(
-      "[getCurrentSchoolYear] Fetching current active school year..."
-    );
-
     const query = `
       SELECT 
         id,
@@ -464,9 +452,6 @@ async function getCurrentSchoolYear(req, res) {
     }
 
     const currentSchoolYear = result[0];
-    console.log(
-      `[getCurrentSchoolYear] Current school year: ${currentSchoolYear.school_year} - ${currentSchoolYear.semester}`
-    );
 
     return res.status(200).json({
       success: true,
